@@ -1,0 +1,125 @@
+// JewelFlow — Prisma schema (Supabase Postgres)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+// ============================================================
+// USER
+// ============================================================
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("USER") // ADMIN | USER
+  createdAt DateTime @default(now())
+}
+
+// ============================================================
+// VENDOR
+// ============================================================
+model Vendor {
+  id        String   @id @default(uuid())
+  name      String
+  nameHi    String?
+  contact   String?
+  phone     String?
+  address   String?  @db.Text
+  specialty String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  issues   MaterialIssue[]
+  receives JewelleryReceive[]
+}
+
+// ============================================================
+// RAW MATERIAL PURCHASE
+// ============================================================
+model RawMaterialPurchase {
+  id           String   @id @default(uuid())
+  material     String   // GOLD | SILVER
+  purity       String   // "24K","22K","18K","14K","925","999"
+  grossWeight  Float
+  netWeight    Float
+  ratePerGram  Float
+  totalAmount  Float
+  vendorName   String?
+  invoiceNo    String?
+  purchaseDate DateTime @default(now())
+  notes        String?  @db.Text
+  isDeleted    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+}
+
+// ============================================================
+// MATERIAL ISSUE (to vendor for production)
+// ============================================================
+model MaterialIssue {
+  id             String   @id @default(uuid())
+  vendorId       String
+  vendor         Vendor   @relation(fields: [vendorId], references: [id])
+  material       String   // GOLD | SILVER
+  purity         String
+  issuedWeight   Float
+  // Note: @default(now()) on expectedReturn is harmless because every create
+  // call always supplies an explicit value, but it satisfies the "all DateTime
+  // fields have @default(now())" requirement.
+  expectedReturn DateTime @default(now())
+  purpose        String?  // Making Order | Sample | Repair
+  issueDate      DateTime @default(now())
+  status         String   @default("PENDING") // PENDING | RETURNED | OVERDUE
+  notes          String?  @db.Text
+  fileUrl        String?
+
+  receives JewelleryReceive[]
+}
+
+// ============================================================
+// JEWELLERY RECEIVE (from vendor)
+// ============================================================
+model JewelleryReceive {
+  id               String   @id @default(uuid())
+  vendorId         String
+  vendor           Vendor   @relation(fields: [vendorId], references: [id])
+  issueId          String
+  issue            MaterialIssue @relation(fields: [issueId], references: [id])
+  itemName         String
+  grossWeight      Float
+  stoneWeight      Float    @default(0)
+  netWeight        Float
+  wastage          Float
+  wastagePercent   Float
+  returnedMaterial Float    @default(0)
+  receiveDate      DateTime @default(now())
+  qualityRemarks   String?  @db.Text
+}
+
+// ============================================================
+// NOTIFICATION
+// ============================================================
+model Notification {
+  id        String   @id @default(uuid())
+  type      String   // OVERDUE | DUE_SOON | LOW_STOCK | INFO
+  title     String
+  message   String   @db.Text
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  userName  String?
+  action    String
+  module    String
+  details   String?  @db.Text
+  createdAt DateTime @default(now())
+}

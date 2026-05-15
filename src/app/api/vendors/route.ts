@@ -1,9 +1,11 @@
 import { NextRequest } from "next/server";
-import { withAuth, json, parseJson } from "@/lib/api-helpers";
+import { withAuth, json, parseJson, queryRecord } from "@/lib/api-helpers";
 import * as vendors from "@/lib/services/vendors";
 
 export async function GET(req: NextRequest) {
-  return withAuth(req, "vendors", async () => json(await vendors.listVendors()));
+  return withAuth(req, "vendors", async () =>
+    json(await vendors.listVendors(queryRecord(req))),
+  );
 }
 
 export async function POST(req: NextRequest) {

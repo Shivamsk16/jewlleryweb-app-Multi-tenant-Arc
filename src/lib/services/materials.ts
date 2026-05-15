@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { computeStock } from "@/lib/business";
+import { parsePagination, toPaginatedResult } from "@/lib/pagination";
 import { purityToFraction } from "@/lib/utils";
 
 const purchaseSchema = z.object({
@@ -22,6 +23,8 @@ export async function listMaterials(query: Record<string, string | undefined>) {
     where.OR = [
       { vendorName: { contains: search, mode: "insensitive" } },
       { invoiceNo: { contains: search, mode: "insensitive" } },
+      { material: { contains: search, mode: "insensitive" } },
+      { purity: { contains: search, mode: "insensitive" } },
     ];
   }
   if (from || to) {
@@ -29,10 +32,17 @@ export async function listMaterials(query: Record<string, string | undefined>) {
     if (from) (where.purchaseDate as Record<string, Date>).gte = new Date(from);
     if (to) (where.purchaseDate as Record<string, Date>).lte = new Date(to);
   }
-  return prisma.rawMaterialPurchase.findMany({
-    where,
-    orderBy: { purchaseDate: "desc" },
-  });
+  const { page, limit, skip } = parsePagination(query);
+  const [data, total] = await Promise.all([
+    prisma.rawMaterialPurchase.findMany({
+      where,
+      orderBy: { purchaseDate: "desc" },
+      skip,
+      take: limit,
+    }),
+    prisma.rawMaterialPurchase.count({ where }),
+  ]);
+  return toPaginatedResult(data, total, page, limit);
 }
 
 export async function createMaterial(body: unknown) {

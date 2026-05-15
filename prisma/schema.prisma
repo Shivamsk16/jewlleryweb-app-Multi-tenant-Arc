@@ -27,7 +27,6 @@ model User {
 model Vendor {
   id        String   @id @default(uuid())
   name      String
-  nameHi    String?
   contact   String?
   phone     String?
   address   String?  @db.Text

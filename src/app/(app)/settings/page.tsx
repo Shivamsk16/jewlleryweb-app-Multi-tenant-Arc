@@ -17,6 +17,7 @@ import {
   TableHead,
   TableCell,
 } from "@/components/ui/table";
+import { tableSerialNumber } from "@/lib/utils";
 import { api, apiFetch } from "@/lib/api";
 import { useAuthStore } from "@/store/auth-store";
 import { useToast } from "@/components/ui/toast";
@@ -179,14 +180,18 @@ export default function SettingsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-12 text-center">S.No.</TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Role</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(users.data ?? []).map((u) => (
+                {(users.data ?? []).map((u, idx) => (
                   <TableRow key={u.id}>
+                    <TableCell className="text-center text-xs tabular-nums text-textSecondary">
+                      {tableSerialNumber(1, 1, idx)}
+                    </TableCell>
                     <TableCell className="font-medium">{u.name}</TableCell>
                     <TableCell className="text-xs font-mono">{u.email}</TableCell>
                     <TableCell>

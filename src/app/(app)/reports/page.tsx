@@ -27,7 +27,7 @@ import {
   TableHead,
   TableCell,
 } from "@/components/ui/table";
-import { formatNumber, formatDate } from "@/lib/utils";
+import { formatNumber, formatDate, tableSerialNumber } from "@/lib/utils";
 import { api } from "@/lib/api";
 
 export default function ReportsPage() {
@@ -106,6 +106,7 @@ export default function ReportsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-12 text-center">S.No.</TableHead>
                     <TableHead>Material</TableHead>
                     <TableHead>Purity</TableHead>
                     <TableHead className="text-right">Purchased (g)</TableHead>
@@ -117,13 +118,16 @@ export default function ReportsPage() {
                 <TableBody>
                   {(stock.data ?? []).length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-8 text-textMuted">
+                      <TableCell colSpan={7} className="text-center py-8 text-textMuted">
                         {t("common.noData")}
                       </TableCell>
                     </TableRow>
                   )}
-                  {(stock.data ?? []).map((s) => (
+                  {(stock.data ?? []).map((s, idx) => (
                     <TableRow key={`${s.material}-${s.purity}`}>
+                      <TableCell className="text-center text-xs tabular-nums text-textSecondary">
+                        {tableSerialNumber(1, 1, idx)}
+                      </TableCell>
                       <TableCell>
                         <Badge variant={s.material === "GOLD" ? "gold" : "silver"}>
                           {s.material}
@@ -160,6 +164,7 @@ export default function ReportsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-12 text-center">S.No.</TableHead>
                     <TableHead>Vendor</TableHead>
                     <TableHead className="text-right">Issued (g)</TableHead>
                     <TableHead className="text-right">Received (g)</TableHead>
@@ -169,8 +174,11 @@ export default function ReportsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(vendorPending.data ?? []).map((v) => (
+                  {(vendorPending.data ?? []).map((v, idx) => (
                     <TableRow key={v.vendorId}>
+                      <TableCell className="text-center text-xs tabular-nums text-textSecondary">
+                        {tableSerialNumber(1, 1, idx)}
+                      </TableCell>
                       <TableCell className="font-medium">{v.vendorName}</TableCell>
                       <TableCell className="text-right tabular-nums">
                         {formatNumber(v.issued)}
@@ -261,14 +269,18 @@ export default function ReportsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-12 text-center">S.No.</TableHead>
                       <TableHead>Item</TableHead>
                       <TableHead className="text-right">Count</TableHead>
                       <TableHead className="text-right">Net Weight (g)</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {(production.data?.byItem ?? []).map((i: any) => (
+                    {(production.data?.byItem ?? []).map((i: any, idx: number) => (
                       <TableRow key={i.itemName}>
+                        <TableCell className="text-center text-xs tabular-nums text-textSecondary">
+                          {tableSerialNumber(1, 1, idx)}
+                        </TableCell>
                         <TableCell>{i.itemName}</TableCell>
                         <TableCell className="text-right tabular-nums">{i.count}</TableCell>
                         <TableCell className="text-right tabular-nums font-semibold">
@@ -303,6 +315,7 @@ export default function ReportsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-12 text-center">S.No.</TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead>Vendor</TableHead>
                     <TableHead>Item</TableHead>
@@ -312,8 +325,11 @@ export default function ReportsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(wastage.data?.items ?? []).map((w: any) => (
+                  {(wastage.data?.items ?? []).map((w: any, idx: number) => (
                     <TableRow key={w.id} className={w.wastagePercent > 10 ? "!bg-danger/5" : ""}>
+                      <TableCell className="text-center text-xs tabular-nums text-textSecondary">
+                        {tableSerialNumber(1, 1, idx)}
+                      </TableCell>
                       <TableCell className="text-xs">{formatDate(w.receiveDate)}</TableCell>
                       <TableCell>{w.vendor}</TableCell>
                       <TableCell>{w.itemName}</TableCell>

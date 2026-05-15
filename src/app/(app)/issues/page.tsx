@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Plus, AlertCircle, Pencil, Trash2, ExternalLink } from "lucide-react";
+import { Plus, AlertCircle, Pencil, Trash2, ExternalLink, FileText } from "lucide-react";
 import { useToast } from "@/components/ui/toast";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,11 @@ import {
   TableHead,
   TableCell,
 } from "@/components/ui/table";
-import { formatNumber, formatDate } from "@/lib/utils";
+import { Pagination } from "@/components/ui/pagination";
+import { TableSearch, useDebouncedValue } from "@/components/ui/table-search";
+import { IssueFileUpload } from "@/components/issues/issue-file-upload";
+import type { PaginatedResult } from "@/lib/pagination";
+import { formatNumber, formatDate, tableSerialNumber } from "@/lib/utils";
 import { api, apiFetch } from "@/lib/api";
 
 type Issue = {
@@ -53,6 +57,13 @@ export default function IssuesPage() {
   const [showForm, setShowForm] = React.useState(false);
   const [editRow, setEditRow] = React.useState<Issue | null>(null);
   const [statusFilter, setStatusFilter] = React.useState("ALL");
+  const [search, setSearch] = React.useState("");
+  const debouncedSearch = useDebouncedValue(search, 300);
+  const [page, setPage] = React.useState(1);
+
+  React.useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, statusFilter]);
 
   const remove = async (id: string) => {
     if (!confirm("Delete this issue entry?")) return;
@@ -68,14 +79,21 @@ export default function IssuesPage() {
     qc.invalidateQueries({ queryKey: ["summary"] });
   };
 
-  const list = useQuery<Issue[]>({
-    queryKey: ["issues", statusFilter],
+  const list = useQuery({
+    queryKey: ["issues", statusFilter, debouncedSearch, page],
     queryFn: () => {
-      const params = new URLSearchParams();
+      const params = new URLSearchParams({
+        page: String(page),
+        limit: "200",
+      });
       if (statusFilter !== "ALL") params.set("status", statusFilter);
-      return api<Issue[]>(`/api/issues?${params}`);
+      if (debouncedSearch) params.set("search", debouncedSearch);
+      return api<PaginatedResult<Issue>>(`/api/issues?${params}`);
     },
   });
+
+  const issues = list.data?.data ?? [];
+  const listMeta = list.data;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -99,22 +117,30 @@ export default function IssuesPage() {
               <CardTitle>{t("issue.register")}</CardTitle>
               <CardDescription>All material issue entries</CardDescription>
             </div>
-            <Select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="h-8 w-40"
-            >
-              <option value="ALL">All Status</option>
-              <option value="PENDING">Pending</option>
-              <option value="RETURNED">Returned</option>
-              <option value="OVERDUE">Overdue</option>
-            </Select>
+            <div className="flex items-center gap-2 flex-wrap">
+              <TableSearch
+                value={search}
+                onChange={setSearch}
+                placeholder={t("common.search")}
+              />
+              <Select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="h-8 w-40"
+              >
+                <option value="ALL">All Status</option>
+                <option value="PENDING">Pending</option>
+                <option value="RETURNED">Returned</option>
+                <option value="OVERDUE">Overdue</option>
+              </Select>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-12 text-center">S.No.</TableHead>
                 <TableHead>Date</TableHead>
                 <TableHead>Vendor</TableHead>
                 <TableHead>Material</TableHead>
@@ -129,14 +155,23 @@ export default function IssuesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {(list.data ?? []).length === 0 && (
+              {list.isLoading && (
                 <TableRow>
-                  <TableCell colSpan={11} className="text-center py-8 text-textMuted">
-                    {t("common.noData")}
+                  <TableCell colSpan={12} className="text-center py-8 text-textMuted">
+                    {t("common.loading")}
                   </TableCell>
                 </TableRow>
               )}
-              {(list.data ?? []).map((i) => {
+              {!list.isLoading && issues.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={12} className="text-center py-8 text-textMuted">
+                    {debouncedSearch || statusFilter !== "ALL"
+                      ? "No results found"
+                      : t("common.noData")}
+                  </TableCell>
+                </TableRow>
+              )}
+              {issues.map((i, idx) => {
                 const received = i.receives.reduce(
                   (s, r) => s + r.netWeight + r.returnedMaterial,
                   0,
@@ -148,6 +183,9 @@ export default function IssuesPage() {
                     key={i.id}
                     className={overdue ? "!bg-danger/10 hover:!bg-danger/15" : ""}
                   >
+                    <TableCell className="text-center text-xs tabular-nums text-textSecondary">
+                      {tableSerialNumber(page, listMeta?.limit ?? 200, idx)}
+                    </TableCell>
                     <TableCell className="text-xs">{formatDate(i.issueDate)}</TableCell>
                     <TableCell className="font-medium">{i.vendor.name}</TableCell>
                     <TableCell>
@@ -184,9 +222,12 @@ export default function IssuesPage() {
                           href={i.fileUrl}
                           target="_blank"
                           rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
                           className="inline-flex items-center gap-1 text-xs text-brand-primary hover:underline"
+                          title="View attachment"
                         >
-                          View <ExternalLink className="size-3" />
+                          <FileText className="size-3.5 shrink-0" />
+                          <ExternalLink className="size-3" />
                         </a>
                       ) : (
                         <span className="text-textMuted text-xs">—</span>
@@ -194,14 +235,24 @@ export default function IssuesPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="icon" onClick={() => setEditRow(i)}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditRow(i);
+                          }}
+                        >
                           <Pencil className="size-3.5" />
                         </Button>
                         <Button
                           variant="ghost"
                           size="icon"
                           className="text-danger hover:text-danger hover:bg-danger/10"
-                          onClick={() => remove(i.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            remove(i.id);
+                          }}
                         >
                           <Trash2 className="size-3.5" />
                         </Button>
@@ -212,6 +263,15 @@ export default function IssuesPage() {
               })}
             </TableBody>
           </Table>
+          {listMeta && (
+            <Pagination
+              page={listMeta.page}
+              totalPages={listMeta.totalPages}
+              total={listMeta.total}
+              limit={listMeta.limit}
+              onPageChange={setPage}
+            />
+          )}
         </CardContent>
       </Card>
 
@@ -225,21 +285,6 @@ export default function IssuesPage() {
       )}
     </div>
   );
-}
-
-async function uploadIssueFile(file: File): Promise<string | null> {
-  const buf = await file.arrayBuffer();
-  const bytes = new Uint8Array(buf);
-  let binary = "";
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  const fileData = btoa(binary);
-  const r = await apiFetch("/api/issues/upload", {
-    method: "POST",
-    body: { fileName: file.name, fileType: file.type, fileData },
-  });
-  if (!r.ok) return null;
-  const j = await r.json();
-  return j.url ?? null;
 }
 
 function IssueFormDialog({
@@ -256,11 +301,13 @@ function IssueFormDialog({
   const qc = useQueryClient();
   const isEdit = !!initial;
 
-  const vendors = useQuery<any[]>({
+  const vendors = useQuery({
     queryKey: ["vendors-active"],
     queryFn: async () => {
-      const all = await api<any[]>("/api/vendors");
-      return all.filter((v: any) => v.isActive);
+      const res = await api<PaginatedResult<{ id: string; name: string; specialty?: string | null; isActive: boolean }>>(
+        "/api/vendors?limit=200&page=1",
+      );
+      return res.data.filter((v) => v.isActive);
     },
     enabled: open,
   });
@@ -283,8 +330,15 @@ function IssueFormDialog({
   const [purpose, setPurpose] = React.useState("Making Order");
   const [notes, setNotes] = React.useState("");
   const [fileUrl, setFileUrl] = React.useState<string | null>(null);
+  const fileUrlRef = React.useRef<string | null>(null);
+  const [fileUploading, setFileUploading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
+
+  const setFileUrlState = React.useCallback((url: string | null) => {
+    fileUrlRef.current = url;
+    setFileUrl(url);
+  }, []);
 
   React.useEffect(() => {
     if (!open) return;
@@ -296,7 +350,7 @@ function IssueFormDialog({
       setExpectedReturn(new Date(initial.expectedReturn).toISOString().slice(0, 10));
       setPurpose(initial.purpose ?? "Making Order");
       setNotes(initial.notes ?? "");
-      setFileUrl(initial.fileUrl ?? null);
+      setFileUrlState(initial.fileUrl ?? null);
     } else {
       setVendorId(null);
       setMaterial("GOLD");
@@ -307,10 +361,10 @@ function IssueFormDialog({
       setExpectedReturn(d.toISOString().slice(0, 10));
       setPurpose("Making Order");
       setNotes("");
-      setFileUrl(null);
+      setFileUrlState(null);
     }
     setError(null);
-  }, [open, initial]);
+  }, [open, initial, setFileUrlState]);
 
   const available =
     (stock.data ?? []).find((s) => s.material === material && s.purity === purity)?.available ?? 0;
@@ -324,6 +378,11 @@ function IssueFormDialog({
       setError("Please select a vendor");
       return;
     }
+    if (fileUploading) {
+      setError("Please wait for the image upload to finish");
+      return;
+    }
+    const savedFileUrl = fileUrlRef.current ?? fileUrl;
     setSubmitting(true);
     try {
       const body = {
@@ -333,8 +392,8 @@ function IssueFormDialog({
         issuedWeight: issued,
         expectedReturn,
         purpose,
-        notes,
-        fileUrl,
+        notes: notes || null,
+        fileUrl: savedFileUrl,
       };
       const r = await apiFetch(isEdit ? `/api/issues/${initial!.id}` : "/api/issues", {
         method: isEdit ? "PATCH" : "POST",
@@ -346,26 +405,11 @@ function IssueFormDialog({
         return;
       }
       
+      toast(isEdit ? "Issue updated" : "Issue created", "success");
       qc.invalidateQueries({ queryKey: ["issues"] });
       qc.invalidateQueries({ queryKey: ["stock"] });
       qc.invalidateQueries({ queryKey: ["summary"] });
       onClose();
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setSubmitting(true);
-    try {
-      const url = await uploadIssueFile(file);
-      if (!url) {
-        setError("File upload failed");
-        return;
-      }
-      setFileUrl(url);
     } finally {
       setSubmitting(false);
     }
@@ -469,17 +513,12 @@ function IssueFormDialog({
           </div>
           <div className="space-y-1.5 col-span-2">
             <Label>Attachment</Label>
-            <Input type="file" accept="image/*,.pdf" onChange={onFileChange} />
-            {fileUrl && (
-              <a
-                href={fileUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-brand-primary hover:underline"
-              >
-                View uploaded file
-              </a>
-            )}
+            <IssueFileUpload
+              value={fileUrl}
+              onChange={setFileUrlState}
+              disabled={submitting}
+              onUploadingChange={setFileUploading}
+            />
           </div>
 
           {error && (
@@ -492,7 +531,7 @@ function IssueFormDialog({
             <Button type="button" variant="outline" onClick={onClose}>
               {t("common.cancel")}
             </Button>
-            <Button type="submit" disabled={submitting || stockShort}>
+            <Button type="submit" disabled={submitting || stockShort || fileUploading}>
               {submitting ? t("common.loading") : t("common.save")}
             </Button>
           </DialogFooter>

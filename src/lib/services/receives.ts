@@ -1,6 +1,17 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { detectOverdue } from "@/lib/business";
+import { parsePagination, toPaginatedResult } from "@/lib/pagination";
+
+function receiveDateRangeFromSearch(search: string): { gte: Date; lte: Date } | null {
+  const parsed = new Date(search);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const gte = new Date(parsed);
+  gte.setHours(0, 0, 0, 0);
+  const lte = new Date(parsed);
+  lte.setHours(23, 59, 59, 999);
+  return { gte, lte };
+}
 
 const receiveSchema = z.object({
   vendorId: z.string().uuid(),
@@ -38,14 +49,32 @@ async function calcWastage(issueId: string, gross: number, stone: number, return
 }
 
 export async function listReceives(query: Record<string, string | undefined>) {
-  const { vendorId } = query;
+  const { vendorId, search } = query;
   const where: Record<string, unknown> = {};
   if (vendorId) where.vendorId = vendorId;
-  return prisma.jewelleryReceive.findMany({
-    where,
-    include: { vendor: true, issue: true },
-    orderBy: { receiveDate: "desc" },
-  });
+  if (search?.trim()) {
+    const s = search.trim();
+    const or: Record<string, unknown>[] = [
+      { itemName: { contains: s, mode: "insensitive" } },
+      { vendor: { name: { contains: s, mode: "insensitive" } } },
+      { issue: { material: { contains: s, mode: "insensitive" } } },
+    ];
+    const dateRange = receiveDateRangeFromSearch(s);
+    if (dateRange) or.push({ receiveDate: dateRange });
+    where.OR = or;
+  }
+  const { page, limit, skip } = parsePagination(query);
+  const [data, total] = await Promise.all([
+    prisma.jewelleryReceive.findMany({
+      where,
+      include: { vendor: true, issue: true },
+      orderBy: { receiveDate: "desc" },
+      skip,
+      take: limit,
+    }),
+    prisma.jewelleryReceive.count({ where }),
+  ]);
+  return toPaginatedResult(data, total, page, limit);
 }
 
 export async function createReceive(body: unknown) {

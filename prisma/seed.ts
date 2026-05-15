@@ -51,7 +51,6 @@ async function main() {
     prisma.vendor.create({
       data: {
         name: "Raju Jewellers",
-        nameHi: "राजू ज्वैलर्स",
         contact: "Raju Verma",
         phone: "+91 98765 43210",
         address: "Karol Bagh, New Delhi",
@@ -62,7 +61,6 @@ async function main() {
     prisma.vendor.create({
       data: {
         name: "Sharma & Sons",
-        nameHi: "शर्मा एंड संस",
         contact: "Anil Sharma",
         phone: "+91 98123 45678",
         address: "Zaveri Bazaar, Mumbai",
@@ -73,7 +71,6 @@ async function main() {
     prisma.vendor.create({
       data: {
         name: "GoldCraft Works",
-        nameHi: "गोल्डक्राफ्ट वर्क्स",
         contact: "Suresh Patel",
         phone: "+91 97777 11122",
         address: "C.P. Tank, Mumbai",
@@ -84,7 +81,6 @@ async function main() {
     prisma.vendor.create({
       data: {
         name: "Mehta Art Jewellers",
-        nameHi: "मेहता आर्ट ज्वैलर्स",
         contact: "Vikram Mehta",
         phone: "+91 99999 88877",
         address: "Johari Bazaar, Jaipur",

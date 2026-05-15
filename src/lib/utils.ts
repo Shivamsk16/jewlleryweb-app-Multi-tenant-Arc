@@ -47,6 +47,11 @@ export function daysBetween(a: Date, b: Date): number {
   return Math.floor(ms / (1000 * 60 * 60 * 24));
 }
 
+/** Continuous row number for paginated tables (S.No.). */
+export function tableSerialNumber(page: number, limit: number, rowIndex: number): number {
+  return (page - 1) * limit + rowIndex + 1;
+}
+
 export function purityToFraction(purity: string): number {
   const map: Record<string, number> = {
     "24K": 1,

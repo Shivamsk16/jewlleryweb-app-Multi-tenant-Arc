@@ -1,7 +1,18 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { detectOverdue, getAvailableStock } from "@/lib/business";
+import { parsePagination, toPaginatedResult } from "@/lib/pagination";
 import { supabase } from "@/lib/supabase";
+
+function issueDateRangeFromSearch(search: string): { gte: Date; lte: Date } | null {
+  const parsed = new Date(search);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const gte = new Date(parsed);
+  gte.setHours(0, 0, 0, 0);
+  const lte = new Date(parsed);
+  lte.setHours(23, 59, 59, 999);
+  return { gte, lte };
+}
 
 const issueSchema = z.object({
   vendorId: z.string().uuid(),
@@ -11,7 +22,10 @@ const issueSchema = z.object({
   expectedReturn: z.string(),
   purpose: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
-  fileUrl: z.string().optional().nullable(),
+  fileUrl: z
+    .union([z.string().min(1), z.null(), z.undefined()])
+    .optional()
+    .transform((v) => (typeof v === "string" && v.trim() ? v.trim() : null)),
 });
 
 const updateSchema = z.object({
@@ -23,7 +37,10 @@ const updateSchema = z.object({
   purpose: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
   status: z.string().optional(),
-  fileUrl: z.string().optional().nullable(),
+  fileUrl: z
+    .union([z.string().min(1), z.null(), z.undefined()])
+    .optional()
+    .transform((v) => (typeof v === "string" && v.trim() ? v.trim() : null)),
 });
 
 const uploadSchema = z.object({
@@ -34,15 +51,35 @@ const uploadSchema = z.object({
 
 export async function listIssues(query: Record<string, string | undefined>) {
   await detectOverdue();
-  const { status, vendorId } = query;
+  const { status, vendorId, search } = query;
   const where: Record<string, unknown> = {};
   if (status && status !== "ALL") where.status = status;
   if (vendorId) where.vendorId = vendorId;
-  return prisma.materialIssue.findMany({
-    where,
-    include: { vendor: true, receives: true },
-    orderBy: { issueDate: "desc" },
-  });
+  if (search?.trim()) {
+    const s = search.trim();
+    const or: Record<string, unknown>[] = [
+      { material: { contains: s, mode: "insensitive" } },
+      { purity: { contains: s, mode: "insensitive" } },
+      { purpose: { contains: s, mode: "insensitive" } },
+      { status: { contains: s, mode: "insensitive" } },
+      { vendor: { name: { contains: s, mode: "insensitive" } } },
+    ];
+    const dateRange = issueDateRangeFromSearch(s);
+    if (dateRange) or.push({ issueDate: dateRange });
+    where.OR = or;
+  }
+  const { page, limit, skip } = parsePagination(query);
+  const [data, total] = await Promise.all([
+    prisma.materialIssue.findMany({
+      where,
+      include: { vendor: true, receives: true },
+      orderBy: { issueDate: "desc" },
+      skip,
+      take: limit,
+    }),
+    prisma.materialIssue.count({ where }),
+  ]);
+  return toPaginatedResult(data, total, page, limit);
 }
 
 export async function createIssue(body: unknown) {
@@ -67,7 +104,8 @@ export async function createIssue(body: unknown) {
       expectedReturn: new Date(d.expectedReturn),
       purpose: d.purpose || null,
       notes: d.notes || null,
-      fileUrl: d.fileUrl || null,
+      fileUrl:
+        typeof d.fileUrl === "string" && d.fileUrl.trim().length > 0 ? d.fileUrl.trim() : null,
     },
     include: { vendor: true, receives: true },
   });
@@ -122,25 +160,44 @@ export async function uploadIssueFile(body: unknown) {
   const parsed = uploadSchema.safeParse(body);
   if (!parsed.success) return { status: 400 as const, body: { message: "Invalid file data" } };
   const { fileName, fileType, fileData } = parsed.data;
-  const allowed = ["application/pdf", "image/jpeg", "image/jpg", "image/png"];
-  if (!allowed.includes(fileType)) {
-    return { status: 400 as const, body: { message: "Only PDF, JPG, PNG allowed" } };
+  const normalizedType = fileType === "image/jpg" ? "image/jpeg" : fileType;
+  const allowed = ["image/jpeg", "image/png"];
+  const extOk = /\.(jpe?g|png)$/i.test(fileName);
+  if (!allowed.includes(normalizedType) && !extOk) {
+    return {
+      status: 400 as const,
+      body: { message: "Only JPG and PNG image formats are accepted" },
+    };
   }
   const buffer = Buffer.from(fileData, "base64");
   if (buffer.length > 5 * 1024 * 1024) {
     return { status: 400 as const, body: { message: "File exceeds 5MB limit" } };
   }
   const path = `${Date.now()}-${fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+  const contentType = allowed.includes(normalizedType) ? normalizedType : "image/jpeg";
+  const dataUrl = `data:${contentType};base64,${fileData}`;
+
   if (supabase) {
-    const { data, error } = await supabase.storage.from("issues").upload(path, buffer, {
-      contentType: fileType,
+    const bucket =
+      process.env.SUPABASE_STORAGE_ISSUES_BUCKET?.trim() || "issues";
+    const { data, error } = await supabase.storage.from(bucket).upload(path, buffer, {
+      contentType,
       upsert: false,
     });
-    if (error) return { status: 500 as const, body: { message: error.message } };
-    const { data: urlData } = supabase.storage.from("issues").getPublicUrl(data.path);
+    if (error) {
+      const msg = error.message ?? "";
+      const bucketMissing =
+        /bucket not found/i.test(msg) ||
+        (/not found/i.test(msg) && /bucket|storage/i.test(msg));
+      if (bucketMissing) {
+        return { status: 200 as const, body: { fileUrl: dataUrl } };
+      }
+      return { status: 500 as const, body: { message: error.message } };
+    }
+    const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(data.path);
     return { status: 200 as const, body: { fileUrl: urlData.publicUrl } };
   }
-  return { status: 200 as const, body: { fileUrl: `data:${fileType};base64,${fileData}` } };
+  return { status: 200 as const, body: { fileUrl: dataUrl } };
 }
 
 export async function listOverdueIssues() {

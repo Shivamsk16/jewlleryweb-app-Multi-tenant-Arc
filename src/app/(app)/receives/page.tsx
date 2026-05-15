@@ -26,7 +26,10 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { useToast } from "@/components/ui/toast";
-import { formatNumber, formatDate } from "@/lib/utils";
+import { formatNumber, formatDate, tableSerialNumber } from "@/lib/utils";
+import { Pagination } from "@/components/ui/pagination";
+import { TableSearch, useDebouncedValue } from "@/components/ui/table-search";
+import type { PaginatedResult } from "@/lib/pagination";
 import { api, apiFetch } from "@/lib/api";
 
 type Receive = {
@@ -52,11 +55,28 @@ export default function ReceivesPage() {
   const qc = useQueryClient();
   const [showForm, setShowForm] = React.useState(false);
   const [editRow, setEditRow] = React.useState<Receive | null>(null);
+  const [search, setSearch] = React.useState("");
+  const debouncedSearch = useDebouncedValue(search, 300);
+  const [page, setPage] = React.useState(1);
 
-  const list = useQuery<Receive[]>({
-    queryKey: ["receives"],
-    queryFn: () => api<Receive[]>("/api/receives"),
+  React.useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch]);
+
+  const list = useQuery({
+    queryKey: ["receives", debouncedSearch, page],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        page: String(page),
+        limit: "200",
+      });
+      if (debouncedSearch) params.set("search", debouncedSearch);
+      return api<PaginatedResult<Receive>>(`/api/receives?${params}`);
+    },
   });
+
+  const receives = list.data?.data ?? [];
+  const listMeta = list.data;
 
   const remove = async (id: string) => {
     if (!confirm("Delete this receive entry?")) return;
@@ -91,13 +111,23 @@ export default function ReceivesPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>{t("receive.register")}</CardTitle>
-          <CardDescription>Auto-calculated wastage and net weight</CardDescription>
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <CardTitle>{t("receive.register")}</CardTitle>
+              <CardDescription>Auto-calculated wastage and net weight</CardDescription>
+            </div>
+            <TableSearch
+              value={search}
+              onChange={setSearch}
+              placeholder={t("common.search")}
+            />
+          </div>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-12 text-center">S.No.</TableHead>
                 <TableHead>Date</TableHead>
                 <TableHead>Vendor</TableHead>
                 <TableHead>{t("common.item")}</TableHead>
@@ -110,15 +140,25 @@ export default function ReceivesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {(list.data ?? []).length === 0 && (
+              {list.isLoading && (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8 text-textMuted">
-                    {t("common.noData")}
+                  <TableCell colSpan={10} className="text-center py-8 text-textMuted">
+                    {t("common.loading")}
                   </TableCell>
                 </TableRow>
               )}
-              {(list.data ?? []).map((r) => (
+              {!list.isLoading && receives.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={10} className="text-center py-8 text-textMuted">
+                    {debouncedSearch ? "No results found" : t("common.noData")}
+                  </TableCell>
+                </TableRow>
+              )}
+              {receives.map((r, idx) => (
                 <TableRow key={r.id} className={r.wastagePercent > 10 ? "!bg-danger/5" : ""}>
+                  <TableCell className="text-center text-xs tabular-nums text-textSecondary">
+                    {tableSerialNumber(page, listMeta?.limit ?? 200, idx)}
+                  </TableCell>
                   <TableCell className="text-xs">{formatDate(r.receiveDate)}</TableCell>
                   <TableCell className="font-medium">{r.vendor.name}</TableCell>
                   <TableCell>{r.itemName}</TableCell>
@@ -143,14 +183,24 @@ export default function ReceivesPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => setEditRow(r)}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditRow(r);
+                        }}
+                      >
                         <Pencil className="size-3.5" />
                       </Button>
                       <Button
                         variant="ghost"
                         size="icon"
                         className="text-danger hover:text-danger hover:bg-danger/10"
-                        onClick={() => remove(r.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          remove(r.id);
+                        }}
                       >
                         <Trash2 className="size-3.5" />
                       </Button>
@@ -160,6 +210,15 @@ export default function ReceivesPage() {
               ))}
             </TableBody>
           </Table>
+          {listMeta && (
+            <Pagination
+              page={listMeta.page}
+              totalPages={listMeta.totalPages}
+              total={listMeta.total}
+              limit={listMeta.limit}
+              onPageChange={setPage}
+            />
+          )}
         </CardContent>
       </Card>
 
@@ -192,8 +251,11 @@ function ReceiveFormDialog({
   const issues = useQuery<any[]>({
     queryKey: ["pending-issues"],
     queryFn: async () => {
-      const all = await api<any[]>("/api/issues");
-      return all.filter((i: any) => i.status !== "RETURNED" || i.id === initial?.issueId);
+      const res = await api<PaginatedResult<any>>("/api/issues?limit=200&page=1");
+      return res.data.filter(
+        (i: { status: string; id: string }) =>
+          i.status !== "RETURNED" || i.id === initial?.issueId,
+      );
     },
     enabled: open,
   });

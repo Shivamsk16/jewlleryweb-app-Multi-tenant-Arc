@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { computeVendorBalances } from "@/lib/business";
+import { parsePagination, toPaginatedResult } from "@/lib/pagination";
 
 const vendorSchema = z.object({
   name: z.string().min(1),
-  nameHi: z.string().optional().nullable(),
   contact: z.string().optional().nullable(),
   phone: z
     .string()
@@ -16,8 +16,24 @@ const vendorSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
-export async function listVendors() {
-  return prisma.vendor.findMany({ orderBy: { createdAt: "desc" } });
+export async function listVendors(query: Record<string, string | undefined> = {}) {
+  const { page, limit, skip } = parsePagination(query);
+  const { search } = query;
+  const where: Record<string, unknown> = {};
+  if (search?.trim()) {
+    const s = search.trim();
+    where.OR = [
+      { name: { contains: s, mode: "insensitive" } },
+      { phone: { contains: s, mode: "insensitive" } },
+      { specialty: { contains: s, mode: "insensitive" } },
+      { contact: { contains: s, mode: "insensitive" } },
+    ];
+  }
+  const [data, total] = await Promise.all([
+    prisma.vendor.findMany({ where, orderBy: { createdAt: "desc" }, skip, take: limit }),
+    prisma.vendor.count({ where }),
+  ]);
+  return toPaginatedResult(data, total, page, limit);
 }
 
 export async function createVendor(body: unknown) {

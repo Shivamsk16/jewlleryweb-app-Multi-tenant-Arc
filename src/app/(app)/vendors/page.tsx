@@ -1,9 +1,10 @@
 "use client";
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Plus, Phone, MapPin, Briefcase, Search, LayoutGrid, List } from "lucide-react";
+import { Plus, Phone, MapPin, Briefcase, LayoutGrid, List } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,12 +28,16 @@ import {
   TableHead,
   TableCell,
 } from "@/components/ui/table";
+import { Pagination } from "@/components/ui/pagination";
+import { TableSearch, useDebouncedValue } from "@/components/ui/table-search";
+import { useToast } from "@/components/ui/toast";
+import type { PaginatedResult } from "@/lib/pagination";
+import { tableSerialNumber } from "@/lib/utils";
 import { api, apiFetch } from "@/lib/api";
 
 type Vendor = {
   id: string;
   name: string;
-  nameHi?: string | null;
   contact?: string | null;
   phone?: string | null;
   address?: string | null;
@@ -42,26 +47,32 @@ type Vendor = {
 
 export default function VendorsPage() {
   const { t } = useTranslation();
+  const router = useRouter();
+  const { toast } = useToast();
   const [showForm, setShowForm] = React.useState(false);
   const [search, setSearch] = React.useState("");
-  const [view, setView] = React.useState<"card" | "list">("card");
+  const debouncedSearch = useDebouncedValue(search, 300);
+  const [page, setPage] = React.useState(1);
+  const [view, setView] = React.useState<"card" | "list">("list");
 
-  const list = useQuery<Vendor[]>({
-    queryKey: ["vendors"],
-    queryFn: () => api<Vendor[]>("/api/vendors"),
+  React.useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch]);
+
+  const list = useQuery({
+    queryKey: ["vendors", page, debouncedSearch],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        page: String(page),
+        limit: "200",
+      });
+      if (debouncedSearch) params.set("search", debouncedSearch);
+      return api<PaginatedResult<Vendor>>(`/api/vendors?${params}`);
+    },
   });
 
-  const filtered = React.useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return list.data ?? [];
-    return (list.data ?? []).filter(
-      (v) =>
-        v.name.toLowerCase().includes(q) ||
-        (v.nameHi ?? "").toLowerCase().includes(q) ||
-        (v.phone ?? "").includes(q) ||
-        (v.specialty ?? "").toLowerCase().includes(q),
-    );
-  }, [list.data, search]);
+  const rows = list.data?.data ?? [];
+  const meta = list.data;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -79,97 +90,44 @@ export default function VendorsPage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[200px] max-w-md">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-textMuted" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={t("common.search")}
-            className="pl-8 h-9"
-          />
-        </div>
-        <div className="flex rounded-md border border-border overflow-hidden">
-          <Button
-            type="button"
-            variant={view === "card" ? "default" : "ghost"}
-            size="sm"
-            className="rounded-none h-9"
-            onClick={() => setView("card")}
-          >
-            <LayoutGrid className="size-4" />
-          </Button>
+        <TableSearch
+          value={search}
+          onChange={setSearch}
+          placeholder={t("common.search")}
+          className="flex-1 min-w-[240px] max-w-xl"
+          inputClassName="pl-8 pr-8 h-9 w-full"
+        />
+        <div className="flex rounded-md border border-border overflow-hidden shrink-0">
           <Button
             type="button"
             variant={view === "list" ? "default" : "ghost"}
             size="sm"
             className="rounded-none h-9"
             onClick={() => setView("list")}
+            title="List view"
           >
             <List className="size-4" />
+          </Button>
+          <Button
+            type="button"
+            variant={view === "card" ? "default" : "ghost"}
+            size="sm"
+            className="rounded-none h-9"
+            onClick={() => setView("card")}
+            title="Card view"
+          >
+            <LayoutGrid className="size-4" />
           </Button>
         </div>
       </div>
 
-      {view === "card" ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.length === 0 && (
-            <div className="col-span-full text-center py-10 text-textMuted">
-              {t("common.noData")}
-            </div>
-          )}
-          {filtered.map((v) => (
-            <Link key={v.id} href={`/vendors/${v.id}`}>
-              <Card className="hover:border-brand-primary transition-colors cursor-pointer h-full">
-                <CardContent className="pt-5">
-                  <div className="flex items-start gap-3">
-                    <div className="h-12 w-12 rounded-full bg-brand-primary text-white font-bold grid place-items-center text-lg shrink-0">
-                      {v.name[0]?.toUpperCase()}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="font-display text-base font-semibold truncate">{v.name}</div>
-                        <span
-                          className={`inline-flex h-2 w-2 rounded-full ${
-                            v.isActive ? "bg-success" : "bg-textMuted"
-                          }`}
-                        />
-                      </div>
-                      {v.nameHi && (
-                        <div className="text-xs text-textSecondary">{v.nameHi}</div>
-                      )}
-                      {v.specialty && (
-                        <Badge variant="secondary" className="mt-2">
-                          <Briefcase className="size-3 mr-1" />
-                          {v.specialty}
-                        </Badge>
-                      )}
-                      <div className="mt-3 space-y-1 text-xs text-textSecondary">
-                        {v.phone && (
-                          <div className="flex items-center gap-1.5">
-                            <Phone className="size-3" />
-                            {v.phone}
-                          </div>
-                        )}
-                        {v.address && (
-                          <div className="flex items-center gap-1.5">
-                            <MapPin className="size-3 shrink-0" />
-                            <span className="truncate">{v.address}</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
-        </div>
-      ) : (
+      {view === "list" ? (
         <Card>
           <CardContent className="pt-4">
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-12 text-center">S.No.</TableHead>
                   <TableHead>{t("vendor.name")}</TableHead>
                   <TableHead>{t("vendor.phone")}</TableHead>
                   <TableHead>{t("vendor.specialty")}</TableHead>
@@ -177,26 +135,30 @@ export default function VendorsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.length === 0 && (
+                {list.isLoading && (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center py-8 text-textMuted">
-                      {t("common.noData")}
+                    <TableCell colSpan={5} className="text-center py-8 text-textMuted">
+                      {t("common.loading")}
                     </TableCell>
                   </TableRow>
                 )}
-                {filtered.map((v) => (
-                  <TableRow key={v.id}>
-                    <TableCell>
-                      <Link
-                        href={`/vendors/${v.id}`}
-                        className="font-medium text-brand-primary hover:underline"
-                      >
-                        {v.name}
-                      </Link>
-                      {v.nameHi && (
-                        <div className="text-xs text-textSecondary">{v.nameHi}</div>
-                      )}
+                {!list.isLoading && rows.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center py-8 text-textMuted">
+                      {debouncedSearch ? "No results found" : t("common.noData")}
                     </TableCell>
+                  </TableRow>
+                )}
+                {rows.map((v, idx) => (
+                  <TableRow
+                    key={v.id}
+                    className="cursor-pointer hover:bg-surfaceElevated/60"
+                    onClick={() => router.push(`/vendors/${v.id}`)}
+                  >
+                    <TableCell className="text-center text-xs tabular-nums text-textSecondary">
+                      {tableSerialNumber(page, meta?.limit ?? 200, idx)}
+                    </TableCell>
+                    <TableCell className="font-medium">{v.name}</TableCell>
                     <TableCell className="text-xs">{v.phone ?? "—"}</TableCell>
                     <TableCell className="text-xs">{v.specialty ?? "—"}</TableCell>
                     <TableCell>
@@ -208,8 +170,84 @@ export default function VendorsPage() {
                 ))}
               </TableBody>
             </Table>
+            {meta && (
+              <Pagination
+                page={meta.page}
+                totalPages={meta.totalPages}
+                total={meta.total}
+                limit={meta.limit}
+                onPageChange={setPage}
+              />
+            )}
           </CardContent>
         </Card>
+      ) : (
+        <>
+          {list.isLoading && (
+            <div className="text-center py-10 text-textMuted">{t("common.loading")}</div>
+          )}
+          {!list.isLoading && rows.length === 0 && (
+            <div className="text-center py-10 text-textMuted">
+              {debouncedSearch ? "No results found" : t("common.noData")}
+            </div>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {rows.map((v) => (
+              <Link key={v.id} href={`/vendors/${v.id}`}>
+                <Card className="hover:border-brand-primary transition-colors cursor-pointer h-full">
+                  <CardContent className="pt-5">
+                    <div className="flex items-start gap-3">
+                      <div className="h-12 w-12 rounded-full bg-brand-primary text-white font-bold grid place-items-center text-lg shrink-0">
+                        {v.name[0]?.toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="font-display text-base font-semibold truncate">
+                            {v.name}
+                          </div>
+                          <span
+                            className={`inline-flex h-2 w-2 rounded-full ${
+                              v.isActive ? "bg-success" : "bg-textMuted"
+                            }`}
+                          />
+                        </div>
+                        {v.specialty && (
+                          <Badge variant="secondary" className="mt-2">
+                            <Briefcase className="size-3 mr-1" />
+                            {v.specialty}
+                          </Badge>
+                        )}
+                        <div className="mt-3 space-y-1 text-xs text-textSecondary">
+                          {v.phone && (
+                            <div className="flex items-center gap-1.5">
+                              <Phone className="size-3" />
+                              {v.phone}
+                            </div>
+                          )}
+                          {v.address && (
+                            <div className="flex items-center gap-1.5">
+                              <MapPin className="size-3 shrink-0" />
+                              <span className="truncate">{v.address}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            ))}
+          </div>
+          {meta && (
+            <Pagination
+              page={meta.page}
+              totalPages={meta.totalPages}
+              total={meta.total}
+              limit={meta.limit}
+              onPageChange={setPage}
+            />
+          )}
+        </>
       )}
 
       <VendorFormDialog open={showForm} onClose={() => setShowForm(false)} />
@@ -219,10 +257,10 @@ export default function VendorsPage() {
 
 function VendorFormDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const qc = useQueryClient();
   const [form, setForm] = React.useState({
     name: "",
-    nameHi: "",
     contact: "",
     phone: "",
     address: "",
@@ -235,7 +273,6 @@ function VendorFormDialog({ open, onClose }: { open: boolean; onClose: () => voi
   const reset = () => {
     setForm({
       name: "",
-      nameHi: "",
       contact: "",
       phone: "",
       address: "",
@@ -261,6 +298,7 @@ function VendorFormDialog({ open, onClose }: { open: boolean; onClose: () => voi
       }
       reset();
       qc.invalidateQueries({ queryKey: ["vendors"] });
+      toast("Vendor created", "success");
       onClose();
     } finally {
       setSubmitting(false);
@@ -276,21 +314,13 @@ function VendorFormDialog({ open, onClose }: { open: boolean; onClose: () => voi
         </DialogHeader>
 
         <form onSubmit={submit} className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 col-span-2">
             <Label>{t("vendor.name")}</Label>
             <Input
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               required
               placeholder="e.g. Raju Jewellers"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>{t("vendor.nameHi")}</Label>
-            <Input
-              value={form.nameHi}
-              onChange={(e) => setForm({ ...form, nameHi: e.target.value })}
-              placeholder="उदा. राजू ज्वैलर्स"
             />
           </div>
           <div className="space-y-1.5">

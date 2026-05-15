@@ -15,7 +15,10 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { formatDateTime } from "@/lib/utils";
+import { formatDateTime, tableSerialNumber } from "@/lib/utils";
+import { Pagination } from "@/components/ui/pagination";
+import { TableSearch, useDebouncedValue } from "@/components/ui/table-search";
+import type { PaginatedResult } from "@/lib/pagination";
 import { api } from "@/lib/api";
 
 type Log = {
@@ -29,22 +32,34 @@ type Log = {
 
 export default function LogsPage() {
   const { t } = useTranslation();
-  const [user, setUser] = React.useState("");
+  const [search, setSearch] = React.useState("");
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [module, setModule] = React.useState("ALL");
   const [from, setFrom] = React.useState("");
   const [to, setTo] = React.useState("");
+  const [page, setPage] = React.useState(1);
 
-  const logs = useQuery<Log[]>({
-    queryKey: ["logs", user, module, from, to],
+  React.useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, module, from, to]);
+
+  const logs = useQuery({
+    queryKey: ["logs", debouncedSearch, module, from, to, page],
     queryFn: () => {
-      const params = new URLSearchParams();
-      if (user) params.set("user", user);
+      const params = new URLSearchParams({
+        page: String(page),
+        limit: "200",
+      });
+      if (debouncedSearch) params.set("search", debouncedSearch);
       if (module !== "ALL") params.set("module", module);
       if (from) params.set("from", from);
       if (to) params.set("to", to);
-      return api<Log[]>(`/api/logs?${params}`);
+      return api<PaginatedResult<Log>>(`/api/logs?${params}`);
     },
   });
+
+  const rows = logs.data?.data ?? [];
+  const listMeta = logs.data;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -59,11 +74,14 @@ export default function LogsPage() {
           <CardDescription>Create, update, and delete operations across the app</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="space-y-1.5">
-              <Label>User</Label>
-              <Input value={user} onChange={(e) => setUser(e.target.value)} placeholder="Filter by user" />
-            </div>
+          <TableSearch
+            value={search}
+            onChange={setSearch}
+            placeholder="Search user, action, module, details…"
+            className="max-w-md"
+            inputClassName="w-full"
+          />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <div className="space-y-1.5">
               <Label>Module</Label>
               <Select value={module} onChange={(e) => setModule(e.target.value)}>
@@ -88,6 +106,7 @@ export default function LogsPage() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-12 text-center">S.No.</TableHead>
                 <TableHead>Timestamp</TableHead>
                 <TableHead>User</TableHead>
                 <TableHead>Action</TableHead>
@@ -98,16 +117,23 @@ export default function LogsPage() {
             <TableBody>
               {logs.isLoading && (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center py-8 text-textMuted">{t("common.loading")}</TableCell>
+                  <TableCell colSpan={6} className="text-center py-8 text-textMuted">{t("common.loading")}</TableCell>
                 </TableRow>
               )}
-              {!logs.isLoading && (logs.data ?? []).length === 0 && (
+              {!logs.isLoading && rows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center py-8 text-textMuted">{t("common.noData")}</TableCell>
+                  <TableCell colSpan={6} className="text-center py-8 text-textMuted">
+                    {debouncedSearch || module !== "ALL" || from || to
+                      ? "No results found"
+                      : t("common.noData")}
+                  </TableCell>
                 </TableRow>
               )}
-              {(logs.data ?? []).map((log) => (
+              {rows.map((log, idx) => (
                 <TableRow key={log.id}>
+                  <TableCell className="text-center text-xs tabular-nums text-textSecondary">
+                    {tableSerialNumber(page, listMeta?.limit ?? 200, idx)}
+                  </TableCell>
                   <TableCell className="text-xs whitespace-nowrap">{formatDateTime(log.createdAt)}</TableCell>
                   <TableCell className="font-medium">{log.userName ?? "—"}</TableCell>
                   <TableCell>
@@ -121,6 +147,15 @@ export default function LogsPage() {
               ))}
             </TableBody>
           </Table>
+          {listMeta && (
+            <Pagination
+              page={listMeta.page}
+              totalPages={listMeta.totalPages}
+              total={listMeta.total}
+              limit={listMeta.limit}
+              onPageChange={setPage}
+            />
+          )}
         </CardContent>
       </Card>
     </div>

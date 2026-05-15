@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Plus, Search, Trash2, Edit, Coins, Gem } from "lucide-react";
+import { Plus, Trash2, Edit, Coins, Gem } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,7 +27,10 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { useToast } from "@/components/ui/toast";
-import { formatINR, formatNumber, formatDate, purityToFraction } from "@/lib/utils";
+import { formatINR, formatNumber, formatDate, purityToFraction, tableSerialNumber } from "@/lib/utils";
+import { Pagination } from "@/components/ui/pagination";
+import { TableSearch, useDebouncedValue } from "@/components/ui/table-search";
+import type { PaginatedResult } from "@/lib/pagination";
 import { api, apiFetch } from "@/lib/api";
 
 type Purchase = {
@@ -62,20 +65,32 @@ export default function MaterialsPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const [search, setSearch] = React.useState("");
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [filter, setFilter] = React.useState("ALL");
+  const [page, setPage] = React.useState(1);
   const { toast } = useToast();
   const [showForm, setShowForm] = React.useState(false);
   const [editRow, setEditRow] = React.useState<Purchase | null>(null);
 
-  const list = useQuery<Purchase[]>({
-    queryKey: ["materials", filter, search],
+  React.useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, filter]);
+
+  const list = useQuery({
+    queryKey: ["materials", filter, debouncedSearch, page],
     queryFn: () => {
-      const params = new URLSearchParams();
+      const params = new URLSearchParams({
+        page: String(page),
+        limit: "200",
+      });
       if (filter !== "ALL") params.set("material", filter);
-      if (search) params.set("search", search);
-      return api<Purchase[]>(`/api/materials?${params}`);
+      if (debouncedSearch) params.set("search", debouncedSearch);
+      return api<PaginatedResult<Purchase>>(`/api/materials?${params}`);
     },
   });
+
+  const purchases = list.data?.data ?? [];
+  const listMeta = list.data;
 
   const stock = useQuery<StockEntry[]>({
     queryKey: ["stock"],
@@ -174,15 +189,11 @@ export default function MaterialsPage() {
               <CardDescription>All raw material purchases</CardDescription>
             </div>
             <div className="flex items-center gap-2">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-textMuted" />
-                <Input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder={t("common.search")}
-                  className="pl-8 h-8 w-40 lg:w-56"
-                />
-              </div>
+              <TableSearch
+                value={search}
+                onChange={setSearch}
+                placeholder={t("common.search")}
+              />
               <Select
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
@@ -199,6 +210,7 @@ export default function MaterialsPage() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-12 text-center">S.No.</TableHead>
                 <TableHead>{t("common.date")}</TableHead>
                 <TableHead>Material</TableHead>
                 <TableHead>{t("material.purity")}</TableHead>
@@ -211,15 +223,25 @@ export default function MaterialsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {(list.data ?? []).length === 0 && (
+              {list.isLoading && (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8 text-textMuted">
-                    {t("common.noData")}
+                  <TableCell colSpan={10} className="text-center py-8 text-textMuted">
+                    {t("common.loading")}
                   </TableCell>
                 </TableRow>
               )}
-              {(list.data ?? []).map((p) => (
+              {!list.isLoading && purchases.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={10} className="text-center py-8 text-textMuted">
+                    {debouncedSearch || filter !== "ALL" ? "No results found" : t("common.noData")}
+                  </TableCell>
+                </TableRow>
+              )}
+              {purchases.map((p, idx) => (
                 <TableRow key={p.id}>
+                  <TableCell className="text-center text-xs tabular-nums text-textSecondary">
+                    {tableSerialNumber(page, listMeta?.limit ?? 200, idx)}
+                  </TableCell>
                   <TableCell className="text-xs">{formatDate(p.purchaseDate)}</TableCell>
                   <TableCell>
                     <Badge variant={p.material === "GOLD" ? "gold" : "silver"}>
@@ -238,13 +260,21 @@ export default function MaterialsPage() {
                   <TableCell className="text-xs">{p.vendorName ?? "—"}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => setEditRow(p)}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditRow(p);
+                        }}
+                      >
                         <Edit className="size-3.5" />
                       </Button>
                       <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           if (confirm("Delete this purchase entry?")) del.mutate(p.id);
                         }}
                         className="text-danger hover:text-danger hover:bg-danger/10"
@@ -257,6 +287,15 @@ export default function MaterialsPage() {
               ))}
             </TableBody>
           </Table>
+          {listMeta && (
+            <Pagination
+              page={listMeta.page}
+              totalPages={listMeta.totalPages}
+              total={listMeta.total}
+              limit={listMeta.limit}
+              onPageChange={setPage}
+            />
+          )}
         </CardContent>
       </Card>
 
@@ -360,6 +399,7 @@ function PurchaseFormDialog({
         return;
       }
       
+      toast(isEdit ? "Purchase updated" : "Purchase created", "success");
       if (!isEdit) reset();
       qc.invalidateQueries({ queryKey: ["materials"] });
       qc.invalidateQueries({ queryKey: ["stock"] });

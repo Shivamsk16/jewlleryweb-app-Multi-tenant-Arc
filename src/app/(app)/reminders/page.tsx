@@ -17,7 +17,8 @@ import {
   TableHead,
   TableCell,
 } from "@/components/ui/table";
-import { formatDate, formatNumber, daysBetween } from "@/lib/utils";
+import { formatDate, formatNumber, daysBetween, tableSerialNumber } from "@/lib/utils";
+import type { PaginatedResult } from "@/lib/pagination";
 import { api } from "@/lib/api";
 
 type Issue = {
@@ -40,7 +41,10 @@ function RemindersContent() {
 
   const allIssues = useQuery<Issue[]>({
     queryKey: ["issues-all"],
-    queryFn: () => api<Issue[]>("/api/issues"),
+    queryFn: async () => {
+      const res = await api<PaginatedResult<Issue>>("/api/issues?limit=200&page=1");
+      return res.data;
+    },
   });
 
   const overdue = useQuery<Issue[]>({
@@ -65,6 +69,7 @@ function RemindersContent() {
     <Table>
       <TableHeader>
         <TableRow>
+          <TableHead className="w-12 text-center">S.No.</TableHead>
           <TableHead>Issue Date</TableHead>
           <TableHead>Vendor</TableHead>
           <TableHead>Material</TableHead>
@@ -77,12 +82,12 @@ function RemindersContent() {
       <TableBody>
         {items.length === 0 && (
           <TableRow>
-            <TableCell colSpan={7} className="text-center py-6 text-textMuted">
+            <TableCell colSpan={8} className="text-center py-6 text-textMuted">
               {mode === "overdue" ? "No overdue items — all good!" : mode === "due-soon" ? "Nothing due soon" : "No reminders"}
             </TableCell>
           </TableRow>
         )}
-        {items.map((i) => {
+        {items.map((i, idx) => {
           const days =
             mode === "overdue"
               ? daysBetween(new Date(i.expectedReturn), now)
@@ -92,6 +97,9 @@ function RemindersContent() {
               key={i.id}
               className={mode === "overdue" ? "!bg-danger/5" : mode === "due-soon" ? "!bg-warning/5" : ""}
             >
+              <TableCell className="text-center text-xs tabular-nums text-textSecondary">
+                {tableSerialNumber(1, 1, idx)}
+              </TableCell>
               <TableCell className="text-xs">{formatDate(i.issueDate)}</TableCell>
               <TableCell className="font-medium">{i.vendor.name}</TableCell>
               <TableCell>

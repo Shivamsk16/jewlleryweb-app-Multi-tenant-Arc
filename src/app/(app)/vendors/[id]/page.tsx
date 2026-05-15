@@ -19,7 +19,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { StatCard } from "@/components/stat-card";
-import { formatDate, formatNumber } from "@/lib/utils";
+import { formatDate, formatNumber, tableSerialNumber } from "@/lib/utils";
 import { api } from "@/lib/api";
 
 export default function VendorDetailPage({ params }: { params: { id: string } }) {
@@ -92,7 +92,6 @@ export default function VendorDetailPage({ params }: { params: { id: string } })
                 {v.isActive ? t("status.active") : t("status.inactive")}
               </Badge>
             </div>
-            {v.nameHi && <div className="text-sm text-textSecondary">{v.nameHi}</div>}
             <div className="mt-3 flex flex-wrap gap-4 text-xs text-textSecondary">
               {v.contact && (
                 <div className="flex items-center gap-1.5">
@@ -163,6 +162,7 @@ export default function VendorDetailPage({ params }: { params: { id: string } })
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-12 text-center">S.No.</TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead>Material</TableHead>
                     <TableHead>Purity</TableHead>
@@ -175,13 +175,16 @@ export default function VendorDetailPage({ params }: { params: { id: string } })
                 <TableBody>
                   {v.issues.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-6 text-textMuted">
+                      <TableCell colSpan={8} className="text-center py-6 text-textMuted">
                         No issues yet
                       </TableCell>
                     </TableRow>
                   )}
-                  {v.issues.map((i: any) => (
+                  {v.issues.map((i: any, idx: number) => (
                     <TableRow key={i.id}>
+                      <TableCell className="text-center text-xs tabular-nums text-textSecondary">
+                        {tableSerialNumber(1, 1, idx)}
+                      </TableCell>
                       <TableCell className="text-xs">{formatDate(i.issueDate)}</TableCell>
                       <TableCell>
                         <Badge variant={i.material === "GOLD" ? "gold" : "silver"}>
@@ -221,6 +224,7 @@ export default function VendorDetailPage({ params }: { params: { id: string } })
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-12 text-center">S.No.</TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead>Item</TableHead>
                     <TableHead className="text-right">Gross (g)</TableHead>
@@ -232,13 +236,16 @@ export default function VendorDetailPage({ params }: { params: { id: string } })
                 <TableBody>
                   {v.receives.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-6 text-textMuted">
+                      <TableCell colSpan={7} className="text-center py-6 text-textMuted">
                         No receives yet
                       </TableCell>
                     </TableRow>
                   )}
-                  {v.receives.map((r: any) => (
+                  {v.receives.map((r: any, idx: number) => (
                     <TableRow key={r.id}>
+                      <TableCell className="text-center text-xs tabular-nums text-textSecondary">
+                        {tableSerialNumber(1, 1, idx)}
+                      </TableCell>
                       <TableCell className="text-xs">{formatDate(r.receiveDate)}</TableCell>
                       <TableCell className="font-medium">{r.itemName}</TableCell>
                       <TableCell className="text-right tabular-nums">{formatNumber(r.grossWeight)}</TableCell>
@@ -267,6 +274,7 @@ export default function VendorDetailPage({ params }: { params: { id: string } })
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-12 text-center">S.No.</TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead>{t("common.item")}</TableHead>
                     <TableHead className="text-right">Returned Material (g)</TableHead>
@@ -275,15 +283,18 @@ export default function VendorDetailPage({ params }: { params: { id: string } })
                 <TableBody>
                   {v.receives.filter((r: any) => r.returnedMaterial > 0).length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={3} className="text-center py-6 text-textMuted">
+                      <TableCell colSpan={4} className="text-center py-6 text-textMuted">
                         No raw material returned
                       </TableCell>
                     </TableRow>
                   )}
                   {v.receives
                     .filter((r: any) => r.returnedMaterial > 0)
-                    .map((r: any) => (
+                    .map((r: any, idx: number) => (
                       <TableRow key={r.id}>
+                        <TableCell className="text-center text-xs tabular-nums text-textSecondary">
+                          {tableSerialNumber(1, 1, idx)}
+                        </TableCell>
                         <TableCell className="text-xs">{formatDate(r.receiveDate)}</TableCell>
                         <TableCell>{r.itemName}</TableCell>
                         <TableCell className="text-right tabular-nums font-semibold">
@@ -325,6 +336,7 @@ export default function VendorDetailPage({ params }: { params: { id: string } })
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-12 text-center">S.No.</TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead>Type</TableHead>
                     <TableHead>{t("common.item")}</TableHead>
@@ -334,13 +346,16 @@ export default function VendorDetailPage({ params }: { params: { id: string } })
                 <TableBody>
                   {(transactions.data ?? []).length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={4} className="text-center py-6 text-textMuted">
+                      <TableCell colSpan={5} className="text-center py-6 text-textMuted">
                         No transactions in range
                       </TableCell>
                     </TableRow>
                   )}
-                  {(transactions.data ?? []).map((row: any) => (
+                  {(transactions.data ?? []).map((row: any, idx: number) => (
                     <TableRow key={`${row.type}-${row.id}`}>
+                      <TableCell className="text-center text-xs tabular-nums text-textSecondary">
+                        {tableSerialNumber(1, 1, idx)}
+                      </TableCell>
                       <TableCell className="text-xs">{formatDate(row.date)}</TableCell>
                       <TableCell>
                         <Badge variant={row.type === "Issue" ? "default" : "success"}>

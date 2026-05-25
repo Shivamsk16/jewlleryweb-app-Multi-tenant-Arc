@@ -1,5 +1,7 @@
+import type { JWTPayload } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { computeStock, computeVendorBalances, detectOverdue } from "@/lib/business";
+import { scopedWhere } from "@/lib/tenant-scope";
 
 function metalTotals(stock: Awaited<ReturnType<typeof computeStock>>, material: string) {
   const entries = stock.filter((s) => s.material === material);
@@ -10,23 +12,35 @@ function metalTotals(stock: Awaited<ReturnType<typeof computeStock>>, material: 
   };
 }
 
-export async function dashboardSummary() {
-  await detectOverdue();
-  const stock = await computeStock();
+export async function dashboardSummary(tenantId: string, user?: JWTPayload) {
+  await detectOverdue(tenantId, user);
+  const tenantFilter = scopedWhere(tenantId, user);
+  const stock = await computeStock(tenantId, user);
   const gold = metalTotals(stock, "GOLD");
   const silver = metalTotals(stock, "SILVER");
-  const vendorBalances = await computeVendorBalances();
+  const vendorBalances = await computeVendorBalances(tenantId, user);
   const totalPending = vendorBalances
     .filter((v) => v.pending > 0)
     .reduce((s, v) => s + v.pending, 0);
   const totalProduced =
-    (await prisma.jewelleryReceive.aggregate({ _sum: { netWeight: true } }))._sum.netWeight ?? 0;
-  const overdueCount = await prisma.materialIssue.count({ where: { status: "OVERDUE" } });
+    (
+      await prisma.jewelleryReceive.aggregate({
+        where: tenantFilter,
+        _sum: { netWeight: true },
+      })
+    )._sum.netWeight ?? 0;
+  const overdueCount = await prisma.materialIssue.count({
+    where: { ...tenantFilter, status: "OVERDUE" },
+  });
   const now = new Date();
   const sevenDays = new Date();
   sevenDays.setDate(sevenDays.getDate() + 7);
   const dueSoonCount = await prisma.materialIssue.count({
-    where: { status: { in: ["PENDING"] }, expectedReturn: { gte: now, lte: sevenDays } },
+    where: {
+      ...tenantFilter,
+      status: { in: ["PENDING"] },
+      expectedReturn: { gte: now, lte: sevenDays },
+    },
   });
   return {
     goldStock: gold.balance,
@@ -47,7 +61,8 @@ export async function dashboardSummary() {
   };
 }
 
-export async function dashboardTrends() {
+export async function dashboardTrends(tenantId: string, user?: JWTPayload) {
+  const tenantFilter = scopedWhere(tenantId, user);
   const months: { month: string; label: string }[] = [];
   const now = new Date();
   for (let i = 5; i >= 0; i--) {
@@ -58,9 +73,9 @@ export async function dashboardTrends() {
     });
   }
   const [purchases, issues, receives] = await Promise.all([
-    prisma.rawMaterialPurchase.findMany({ where: { isDeleted: false } }),
-    prisma.materialIssue.findMany(),
-    prisma.jewelleryReceive.findMany(),
+    prisma.rawMaterialPurchase.findMany({ where: { ...tenantFilter, isDeleted: false } }),
+    prisma.materialIssue.findMany({ where: tenantFilter }),
+    prisma.jewelleryReceive.findMany({ where: tenantFilter }),
   ]);
   return months.map((m) => {
     const purchased = purchases
@@ -81,7 +96,12 @@ export async function dashboardTrends() {
   });
 }
 
-export async function dashboardMetalTrends(period: string) {
+export async function dashboardMetalTrends(
+  tenantId: string,
+  period: string,
+  user?: JWTPayload,
+) {
+  const tenantFilter = scopedWhere(tenantId, user);
   const now = new Date();
   const buckets: { label: string; start: Date; end: Date }[] = [];
   if (period === "weekly") {
@@ -120,8 +140,8 @@ export async function dashboardMetalTrends(period: string) {
     }
   }
   const [purchases, issues] = await Promise.all([
-    prisma.rawMaterialPurchase.findMany({ where: { isDeleted: false } }),
-    prisma.materialIssue.findMany(),
+    prisma.rawMaterialPurchase.findMany({ where: { ...tenantFilter, isDeleted: false } }),
+    prisma.materialIssue.findMany({ where: tenantFilter }),
   ]);
   const inRange = (date: Date, start: Date, end: Date) => date >= start && date <= end;
   const buildSeries = (material: string) =>
@@ -137,32 +157,39 @@ export async function dashboardMetalTrends(period: string) {
   return { gold: buildSeries("GOLD"), silver: buildSeries("SILVER") };
 }
 
-export async function dashboardDueSoon() {
-  await detectOverdue();
+export async function dashboardDueSoon(tenantId: string, user?: JWTPayload) {
+  await detectOverdue(tenantId, user);
   const now = new Date();
   const sevenDays = new Date();
   sevenDays.setDate(sevenDays.getDate() + 7);
   return prisma.materialIssue.findMany({
-    where: { status: "PENDING", expectedReturn: { gte: now, lte: sevenDays } },
+    where: {
+      ...scopedWhere(tenantId, user),
+      status: "PENDING",
+      expectedReturn: { gte: now, lte: sevenDays },
+    },
     include: { vendor: true, receives: true },
     orderBy: { expectedReturn: "asc" },
     take: 5,
   });
 }
 
-export async function dashboardRecent() {
+export async function dashboardRecent(tenantId: string, user?: JWTPayload) {
+  const tenantFilter = scopedWhere(tenantId, user);
   const [purchases, issues, receives] = await Promise.all([
     prisma.rawMaterialPurchase.findMany({
-      where: { isDeleted: false },
+      where: { ...tenantFilter, isDeleted: false },
       orderBy: { purchaseDate: "desc" },
       take: 10,
     }),
     prisma.materialIssue.findMany({
+      where: tenantFilter,
       orderBy: { issueDate: "desc" },
       take: 10,
       include: { vendor: true },
     }),
     prisma.jewelleryReceive.findMany({
+      where: tenantFilter,
       orderBy: { receiveDate: "desc" },
       take: 10,
       include: { vendor: true },

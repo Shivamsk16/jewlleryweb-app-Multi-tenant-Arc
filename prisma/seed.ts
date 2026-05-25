@@ -3,6 +3,8 @@ import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
+const DEMO_TENANT_ID = "a0000000-0000-4000-8000-000000000001";
+
 function purityFraction(p: string): number {
   const map: Record<string, number> = {
     "24K": 1,
@@ -21,35 +23,179 @@ async function main() {
   await prisma.jewelleryReceive.deleteMany();
   await prisma.materialIssue.deleteMany();
   await prisma.rawMaterialPurchase.deleteMany();
-  await prisma.vendor.deleteMany();
   await prisma.notification.deleteMany();
+  await prisma.auditLog.deleteMany();
+  await prisma.impersonationSession.deleteMany();
+  await prisma.vendor.deleteMany();
+  await prisma.invitation.deleteMany();
+  await prisma.tenantMember.deleteMany();
+  await prisma.role.deleteMany();
   await prisma.activityLog.deleteMany();
+  await prisma.tenant.deleteMany();
+  await prisma.plan.deleteMany();
   await prisma.user.deleteMany();
+
+  const [trialPlan] = await Promise.all([
+    prisma.plan.create({
+      data: {
+        name: "trial",
+        displayName: "Trial",
+        priceMonthly: 0,
+        priceYearly: 0,
+        maxUsers: 3,
+        maxVendors: 5,
+        trialDays: 14,
+        features: { reports: true, audit_logs: true },
+        isActive: true,
+      },
+    }),
+    prisma.plan.create({
+      data: {
+        name: "starter",
+        displayName: "Starter",
+        priceMonthly: 999,
+        priceYearly: 9990,
+        maxUsers: 5,
+        maxVendors: 15,
+        trialDays: 14,
+        features: { reports: true, audit_logs: true },
+        isActive: true,
+      },
+    }),
+    prisma.plan.create({
+      data: {
+        name: "pro",
+        displayName: "Pro",
+        priceMonthly: 2499,
+        priceYearly: 24990,
+        maxUsers: 15,
+        maxVendors: 50,
+        trialDays: 14,
+        features: { reports: true, audit_logs: true },
+        isActive: true,
+      },
+    }),
+    prisma.plan.create({
+      data: {
+        name: "enterprise",
+        displayName: "Enterprise",
+        priceMonthly: 4999,
+        priceYearly: 49990,
+        maxUsers: 999,
+        maxVendors: 999,
+        trialDays: 14,
+        features: { reports: true, audit_logs: true },
+        isActive: true,
+      },
+    }),
+  ]);
+
+  const demoTenant = await prisma.tenant.create({
+    data: {
+      id: DEMO_TENANT_ID,
+      name: "Demo Tenant",
+      slug: "demo",
+      plan: "trial",
+      planId: trialPlan.id,
+      status: "active",
+      maxUsers: trialPlan.maxUsers,
+      maxVendors: trialPlan.maxVendors,
+    },
+  });
+
+  const [adminRole, editorRole, viewerRole] = await Promise.all([
+    prisma.role.create({
+      data: {
+        tenantId: demoTenant.id,
+        name: "admin",
+        isSystemRole: true,
+        permissions: {
+          can_invite: true,
+          can_edit: true,
+          can_delete: true,
+          can_view_reports: true,
+        },
+      },
+    }),
+    prisma.role.create({
+      data: {
+        tenantId: demoTenant.id,
+        name: "editor",
+        isSystemRole: true,
+        permissions: {
+          can_invite: false,
+          can_edit: true,
+          can_delete: false,
+          can_view_reports: true,
+        },
+      },
+    }),
+    prisma.role.create({
+      data: {
+        tenantId: demoTenant.id,
+        name: "viewer",
+        isSystemRole: true,
+        permissions: {
+          can_invite: false,
+          can_edit: false,
+          can_delete: false,
+          can_view_reports: true,
+        },
+      },
+    }),
+  ]);
+  void editorRole;
+  void viewerRole;
 
   const adminPwd = await bcrypt.hash("Admin@123", 12);
   const userPwd = await bcrypt.hash("User@123", 12);
 
-  await prisma.user.createMany({
-    data: [
-      {
-        email: "admin@jewelflow.in",
-        password: adminPwd,
-        name: "Admin",
-        role: "ADMIN",
-      },
-      {
-        email: "user@jewelflow.in",
-        password: userPwd,
-        name: "Staff User",
-        role: "USER",
-      },
-    ],
+  const adminUser = await prisma.user.create({
+    data: {
+      email: "admin@jewelflow.in",
+      password: adminPwd,
+      name: "Admin",
+      role: "ADMIN",
+      emailVerified: true,
+    },
   });
+
+  await prisma.user.create({
+    data: {
+      email: "user@jewelflow.in",
+      password: userPwd,
+      name: "Staff User",
+      role: "USER",
+    },
+  });
+
+  await prisma.user.create({
+    data: {
+      email: "superadmin@jewelflow.in",
+      password: await bcrypt.hash("SuperAdmin@123", 12),
+      name: "Platform Admin",
+      role: "ADMIN",
+      superAdmin: true,
+      emailVerified: true,
+    },
+  });
+
+  await prisma.tenantMember.create({
+    data: {
+      userId: adminUser.id,
+      tenantId: demoTenant.id,
+      roleId: adminRole.id,
+      status: "active",
+      joinedAt: new Date(),
+    },
+  });
+
   console.log("Users created (admin@jewelflow.in / Admin@123, user@jewelflow.in / User@123)");
 
   const vendors = await Promise.all([
     prisma.vendor.create({
       data: {
+        tenantId: demoTenant.id,
         name: "Raju Jewellers",
         contact: "Raju Verma",
         phone: "+91 98765 43210",
@@ -60,6 +206,7 @@ async function main() {
     }),
     prisma.vendor.create({
       data: {
+        tenantId: demoTenant.id,
         name: "Sharma & Sons",
         contact: "Anil Sharma",
         phone: "+91 98123 45678",
@@ -70,6 +217,7 @@ async function main() {
     }),
     prisma.vendor.create({
       data: {
+        tenantId: demoTenant.id,
         name: "GoldCraft Works",
         contact: "Suresh Patel",
         phone: "+91 97777 11122",
@@ -80,6 +228,7 @@ async function main() {
     }),
     prisma.vendor.create({
       data: {
+        tenantId: demoTenant.id,
         name: "Mehta Art Jewellers",
         contact: "Vikram Mehta",
         phone: "+91 99999 88877",
@@ -112,6 +261,7 @@ async function main() {
     const totalAmount = +(p.gross * p.rate).toFixed(2);
     await prisma.rawMaterialPurchase.create({
       data: {
+        tenantId: demoTenant.id,
         material: p.material,
         purity: p.purity,
         grossWeight: p.gross,
@@ -130,6 +280,7 @@ async function main() {
 
   const i1 = await prisma.materialIssue.create({
     data: {
+      tenantId: demoTenant.id,
       vendorId: raju.id,
       material: "GOLD",
       purity: "22K",
@@ -144,6 +295,7 @@ async function main() {
 
   const i2 = await prisma.materialIssue.create({
     data: {
+      tenantId: demoTenant.id,
       vendorId: sharma.id,
       material: "GOLD",
       purity: "24K",
@@ -162,6 +314,7 @@ async function main() {
 
   await prisma.materialIssue.create({
     data: {
+      tenantId: demoTenant.id,
       vendorId: goldcraft.id,
       material: "SILVER",
       purity: "925",
@@ -180,6 +333,7 @@ async function main() {
 
   const i4 = await prisma.materialIssue.create({
     data: {
+      tenantId: demoTenant.id,
       vendorId: mehta.id,
       material: "GOLD",
       purity: "22K",
@@ -194,6 +348,7 @@ async function main() {
 
   await prisma.materialIssue.create({
     data: {
+      tenantId: demoTenant.id,
       vendorId: sharma.id,
       material: "GOLD",
       purity: "18K",
@@ -211,6 +366,7 @@ async function main() {
 
   await prisma.materialIssue.create({
     data: {
+      tenantId: demoTenant.id,
       vendorId: raju.id,
       material: "SILVER",
       purity: "925",
@@ -229,6 +385,7 @@ async function main() {
 
   await prisma.jewelleryReceive.create({
     data: {
+      tenantId: demoTenant.id,
       vendorId: raju.id,
       issueId: i1.id,
       itemName: "Gold Bangle Set",
@@ -245,6 +402,7 @@ async function main() {
 
   await prisma.jewelleryReceive.create({
     data: {
+      tenantId: demoTenant.id,
       vendorId: sharma.id,
       issueId: i2.id,
       itemName: "Necklace Centerpiece",
@@ -261,6 +419,7 @@ async function main() {
 
   await prisma.jewelleryReceive.create({
     data: {
+      tenantId: demoTenant.id,
       vendorId: mehta.id,
       issueId: i4.id,
       itemName: "Wedding Bridal Set",
@@ -278,6 +437,7 @@ async function main() {
 
   await prisma.notification.create({
     data: {
+      tenantId: demoTenant.id,
       type: "OVERDUE",
       title: "Issue overdue",
       message: `Issue #${i1.id} to Raju Jewellers (50g GOLD 22K) is past expected return by 10 days.`,
@@ -289,6 +449,7 @@ async function main() {
   console.log("\n--- Login credentials ---");
   console.log("Admin: admin@jewelflow.in / Admin@123");
   console.log("User:  user@jewelflow.in  / User@123\n");
+  console.log("Super Admin: superadmin@jewelflow.in / SuperAdmin@123\n");
 }
 
 main()

@@ -1,7 +1,9 @@
 import { z } from "zod";
+import type { JWTPayload } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { computeVendorBalances } from "@/lib/business";
 import { parsePagination, toPaginatedResult } from "@/lib/pagination";
+import { scopedWhere } from "@/lib/tenant-scope";
 
 const vendorSchema = z.object({
   name: z.string().min(1),
@@ -16,10 +18,14 @@ const vendorSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
-export async function listVendors(query: Record<string, string | undefined> = {}) {
+export async function listVendors(
+  tenantId: string,
+  query: Record<string, string | undefined> = {},
+  user?: JWTPayload,
+) {
   const { page, limit, skip } = parsePagination(query);
   const { search } = query;
-  const where: Record<string, unknown> = {};
+  const where: Record<string, unknown> = scopedWhere(tenantId, user);
   if (search?.trim()) {
     const s = search.trim();
     where.OR = [
@@ -30,24 +36,38 @@ export async function listVendors(query: Record<string, string | undefined> = {}
     ];
   }
   const [data, total] = await Promise.all([
-    prisma.vendor.findMany({ where, orderBy: { createdAt: "desc" }, skip, take: limit }),
+    prisma.vendor.findMany({
+      where,
+      select: {
+        id: true,
+        name: true,
+        contact: true,
+        phone: true,
+        address: true,
+        specialty: true,
+        isActive: true,
+      },
+      orderBy: { createdAt: "desc" },
+      skip,
+      take: limit,
+    }),
     prisma.vendor.count({ where }),
   ]);
   return toPaginatedResult(data, total, page, limit);
 }
 
-export async function createVendor(body: unknown) {
+export async function createVendor(tenantId: string, body: unknown) {
   const parsed = vendorSchema.safeParse(body);
   if (!parsed.success) {
     return { status: 400 as const, body: { message: "Invalid input", issues: parsed.error.issues } };
   }
-  const created = await prisma.vendor.create({ data: parsed.data });
+  const created = await prisma.vendor.create({ data: { ...parsed.data, tenantId } });
   return { status: 201 as const, body: created };
 }
 
-export async function getVendor(id: string) {
-  const vendor = await prisma.vendor.findUnique({
-    where: { id },
+export async function getVendor(tenantId: string, id: string, user?: JWTPayload) {
+  const vendor = await prisma.vendor.findFirst({
+    where: { id, ...scopedWhere(tenantId, user) },
     include: {
       issues: { orderBy: { issueDate: "desc" }, include: { receives: true } },
       receives: { orderBy: { receiveDate: "desc" } },
@@ -57,26 +77,35 @@ export async function getVendor(id: string) {
   return { status: 200 as const, body: vendor };
 }
 
-export async function updateVendor(id: string, body: Record<string, unknown>) {
+export async function updateVendor(tenantId: string, id: string, body: Record<string, unknown>, user?: JWTPayload) {
+  const existing = await prisma.vendor.findFirst({
+    where: { id, ...scopedWhere(tenantId, user) },
+  });
+  if (!existing) return { status: 404 as const, body: { message: "Not found" } };
   const updated = await prisma.vendor.update({ where: { id }, data: body });
   return { status: 200 as const, body: updated };
 }
 
-export async function getVendorBalance(id: string) {
-  const balances = await computeVendorBalances();
+export async function getVendorBalance(tenantId: string, id: string, user?: JWTPayload) {
+  const balances = await computeVendorBalances(tenantId, user);
   const found = balances.find((b) => b.vendorId === id);
   if (!found) return { status: 404 as const, body: { message: "Not found" } };
   return { status: 200 as const, body: found };
 }
 
 export async function getVendorTransactions(
+  tenantId: string,
   id: string,
   query: Record<string, string | undefined>,
+  user?: JWTPayload,
 ) {
   const { from, to } = query;
-  const vendor = await prisma.vendor.findUnique({ where: { id } });
+  const vendor = await prisma.vendor.findFirst({
+    where: { id, ...scopedWhere(tenantId, user) },
+  });
   if (!vendor) return { status: 404 as const, body: { message: "Not found" } };
 
+  const tenantFilter = scopedWhere(tenantId, user);
   const dateFilter = (date: Date) => {
     if (from && date < new Date(from)) return false;
     if (to) {
@@ -88,9 +117,12 @@ export async function getVendorTransactions(
   };
 
   const [issues, receives] = await Promise.all([
-    prisma.materialIssue.findMany({ where: { vendorId: id }, orderBy: { issueDate: "desc" } }),
+    prisma.materialIssue.findMany({
+      where: { vendorId: id, ...tenantFilter },
+      orderBy: { issueDate: "desc" },
+    }),
     prisma.jewelleryReceive.findMany({
-      where: { vendorId: id },
+      where: { vendorId: id, ...tenantFilter },
       include: { issue: true },
       orderBy: { receiveDate: "desc" },
     }),

@@ -4,7 +4,7 @@ import { withAuth, json, parseJson } from "@/lib/api-helpers";
 import * as authService from "@/lib/services/auth";
 
 export async function PATCH(req: NextRequest) {
-  return withAuth(req, "auth", async (user) => {
+  return withAuth(req, "auth", async (user, req, _tenantId) => {
     const body = await parseJson(req);
     const result = await authService.updateProfile(user, body);
     const res = json(result.body, result.status);

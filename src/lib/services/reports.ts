@@ -1,18 +1,24 @@
+import type { JWTPayload } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { computeStock, computeVendorBalances } from "@/lib/business";
+import { scopedWhere } from "@/lib/tenant-scope";
 
-export async function reportStock() {
-  return computeStock();
+export async function reportStock(tenantId: string, user?: JWTPayload) {
+  return computeStock(tenantId, user);
 }
 
-export async function reportVendorPending() {
-  const balances = await computeVendorBalances();
+export async function reportVendorPending(tenantId: string, user?: JWTPayload) {
+  const balances = await computeVendorBalances(tenantId, user);
   return balances.sort((a, b) => b.pending - a.pending);
 }
 
-export async function reportProduction(query: Record<string, string | undefined>) {
+export async function reportProduction(
+  tenantId: string,
+  query: Record<string, string | undefined>,
+  user?: JWTPayload,
+) {
   const { from, to, material } = query;
-  const where: Record<string, unknown> = {};
+  const where: Record<string, unknown> = scopedWhere(tenantId, user);
   if (from || to) {
     where.receiveDate = {};
     if (from) (where.receiveDate as Record<string, Date>).gte = new Date(from);
@@ -60,8 +66,9 @@ export async function reportProduction(query: Record<string, string | undefined>
   };
 }
 
-export async function reportWastage() {
+export async function reportWastage(tenantId: string, user?: JWTPayload) {
   const receives = await prisma.jewelleryReceive.findMany({
+    where: scopedWhere(tenantId, user),
     include: { vendor: true, issue: true },
     orderBy: { receiveDate: "desc" },
   });

@@ -32,6 +32,7 @@ import { Pagination } from "@/components/ui/pagination";
 import { TableSearch, useDebouncedValue } from "@/components/ui/table-search";
 import type { PaginatedResult } from "@/lib/pagination";
 import { api, apiFetch } from "@/lib/api";
+import { StatCardSkeleton, TableSkeleton } from "@/components/ui/skeleton";
 
 type Purchase = {
   id: string;
@@ -128,6 +129,13 @@ export default function MaterialsPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {stock.isLoading ? (
+          <>
+            <StatCardSkeleton />
+            <StatCardSkeleton />
+          </>
+        ) : (
+        <>
         <Card className="bg-gradient-to-br from-brand-gold/15 to-brand-secondaryLight border-brand-gold/30">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-semibold text-yellow-800">Gold Stock</CardTitle>
@@ -179,6 +187,8 @@ export default function MaterialsPage() {
             </div>
           </CardContent>
         </Card>
+        </>
+        )}
       </div>
 
       <Card>
@@ -207,6 +217,9 @@ export default function MaterialsPage() {
           </div>
         </CardHeader>
         <CardContent>
+          {list.isLoading ? (
+            <TableSkeleton rows={8} />
+          ) : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -223,14 +236,7 @@ export default function MaterialsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {list.isLoading && (
-                <TableRow>
-                  <TableCell colSpan={10} className="text-center py-8 text-textMuted">
-                    {t("common.loading")}
-                  </TableCell>
-                </TableRow>
-              )}
-              {!list.isLoading && purchases.length === 0 && (
+              {purchases.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={10} className="text-center py-8 text-textMuted">
                     {debouncedSearch || filter !== "ALL" ? "No results found" : t("common.noData")}
@@ -287,7 +293,8 @@ export default function MaterialsPage() {
               ))}
             </TableBody>
           </Table>
-          {listMeta && (
+          )}
+          {listMeta && !list.isLoading && (
             <Pagination
               page={listMeta.page}
               totalPages={listMeta.totalPages}

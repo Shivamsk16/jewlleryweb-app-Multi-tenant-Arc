@@ -1,7 +1,9 @@
 import { z } from "zod";
+import type { JWTPayload } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { computeStock } from "@/lib/business";
 import { parsePagination, toPaginatedResult } from "@/lib/pagination";
+import { scopedWhere } from "@/lib/tenant-scope";
 import { purityToFraction } from "@/lib/utils";
 
 const purchaseSchema = z.object({
@@ -15,9 +17,13 @@ const purchaseSchema = z.object({
   notes: z.string().optional().nullable(),
 });
 
-export async function listMaterials(query: Record<string, string | undefined>) {
+export async function listMaterials(
+  tenantId: string,
+  query: Record<string, string | undefined>,
+  user?: JWTPayload,
+) {
   const { material, search, from, to } = query;
-  const where: Record<string, unknown> = { isDeleted: false };
+  const where: Record<string, unknown> = { ...scopedWhere(tenantId, user), isDeleted: false };
   if (material && material !== "ALL") where.material = material;
   if (search) {
     where.OR = [
@@ -36,6 +42,19 @@ export async function listMaterials(query: Record<string, string | undefined>) {
   const [data, total] = await Promise.all([
     prisma.rawMaterialPurchase.findMany({
       where,
+      select: {
+        id: true,
+        material: true,
+        purity: true,
+        grossWeight: true,
+        netWeight: true,
+        ratePerGram: true,
+        totalAmount: true,
+        vendorName: true,
+        invoiceNo: true,
+        purchaseDate: true,
+        notes: true,
+      },
       orderBy: { purchaseDate: "desc" },
       skip,
       take: limit,
@@ -45,7 +64,7 @@ export async function listMaterials(query: Record<string, string | undefined>) {
   return toPaginatedResult(data, total, page, limit);
 }
 
-export async function createMaterial(body: unknown) {
+export async function createMaterial(tenantId: string, body: unknown) {
   const parsed = purchaseSchema.safeParse(body);
   if (!parsed.success) {
     return { status: 400 as const, body: { message: "Invalid input", issues: parsed.error.issues } };
@@ -55,6 +74,7 @@ export async function createMaterial(body: unknown) {
   const totalAmount = +(d.grossWeight * d.ratePerGram).toFixed(2);
   const created = await prisma.rawMaterialPurchase.create({
     data: {
+      tenantId,
       material: d.material,
       purity: d.purity,
       grossWeight: d.grossWeight,
@@ -70,7 +90,16 @@ export async function createMaterial(body: unknown) {
   return { status: 201 as const, body: created };
 }
 
-export async function updateMaterial(id: string, body: Record<string, unknown>) {
+export async function updateMaterial(
+  tenantId: string,
+  id: string,
+  body: Record<string, unknown>,
+  user?: JWTPayload,
+) {
+  const existing = await prisma.rawMaterialPurchase.findFirst({
+    where: { id, ...scopedWhere(tenantId, user) },
+  });
+  if (!existing) return { status: 404 as const, body: { message: "Not found" } };
   const data: Record<string, unknown> = {};
   if (body.material) data.material = body.material;
   if (body.purity) data.purity = body.purity;
@@ -92,11 +121,15 @@ export async function updateMaterial(id: string, body: Record<string, unknown>) 
   return { status: 200 as const, body: updated };
 }
 
-export async function softDeleteMaterial(id: string) {
+export async function softDeleteMaterial(tenantId: string, id: string, user?: JWTPayload) {
+  const existing = await prisma.rawMaterialPurchase.findFirst({
+    where: { id, ...scopedWhere(tenantId, user) },
+  });
+  if (!existing) return { status: 404 as const, body: { message: "Not found" } };
   await prisma.rawMaterialPurchase.update({ where: { id }, data: { isDeleted: true } });
-  return { ok: true };
+  return { status: 200 as const, body: { ok: true } };
 }
 
-export async function stockMaterials() {
-  return computeStock();
+export async function stockMaterials(tenantId: string, user?: JWTPayload) {
+  return computeStock(tenantId, user);
 }

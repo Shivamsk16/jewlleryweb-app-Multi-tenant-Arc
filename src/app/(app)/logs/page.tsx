@@ -20,6 +20,7 @@ import { Pagination } from "@/components/ui/pagination";
 import { TableSearch, useDebouncedValue } from "@/components/ui/table-search";
 import type { PaginatedResult } from "@/lib/pagination";
 import { api } from "@/lib/api";
+import { TableSkeleton } from "@/components/ui/skeleton";
 
 type Log = {
   id: string;
@@ -103,6 +104,9 @@ export default function LogsPage() {
             </div>
           </div>
 
+          {logs.isLoading ? (
+            <TableSkeleton rows={8} />
+          ) : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -115,12 +119,7 @@ export default function LogsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {logs.isLoading && (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-textMuted">{t("common.loading")}</TableCell>
-                </TableRow>
-              )}
-              {!logs.isLoading && rows.length === 0 && (
+              {rows.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8 text-textMuted">
                     {debouncedSearch || module !== "ALL" || from || to
@@ -147,7 +146,8 @@ export default function LogsPage() {
               ))}
             </TableBody>
           </Table>
-          {listMeta && (
+          )}
+          {listMeta && !logs.isLoading && (
             <Pagination
               page={listMeta.page}
               totalPages={listMeta.totalPages}

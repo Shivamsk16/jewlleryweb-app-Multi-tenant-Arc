@@ -1,7 +1,9 @@
 import { z } from "zod";
+import type { JWTPayload } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { detectOverdue } from "@/lib/business";
 import { parsePagination, toPaginatedResult } from "@/lib/pagination";
+import { scopedWhere } from "@/lib/tenant-scope";
 
 function receiveDateRangeFromSearch(search: string): { gte: Date; lte: Date } | null {
   const parsed = new Date(search);
@@ -33,9 +35,16 @@ const updateSchema = z.object({
   receiveDate: z.string().optional(),
 });
 
-async function calcWastage(issueId: string, gross: number, stone: number, returned: number) {
-  const issue = await prisma.materialIssue.findUnique({
-    where: { id: issueId },
+async function calcWastage(
+  tenantId: string,
+  issueId: string,
+  gross: number,
+  stone: number,
+  returned: number,
+  user?: JWTPayload,
+) {
+  const issue = await prisma.materialIssue.findFirst({
+    where: { id: issueId, ...scopedWhere(tenantId, user) },
     include: { receives: true },
   });
   if (!issue) return { netWeight: 0, wastage: 0, wastagePercent: 0 };
@@ -48,9 +57,13 @@ async function calcWastage(issueId: string, gross: number, stone: number, return
   return { netWeight, wastage, wastagePercent };
 }
 
-export async function listReceives(query: Record<string, string | undefined>) {
+export async function listReceives(
+  tenantId: string,
+  query: Record<string, string | undefined>,
+  user?: JWTPayload,
+) {
   const { vendorId, search } = query;
-  const where: Record<string, unknown> = {};
+  const where: Record<string, unknown> = scopedWhere(tenantId, user);
   if (vendorId) where.vendorId = vendorId;
   if (search?.trim()) {
     const s = search.trim();
@@ -67,7 +80,22 @@ export async function listReceives(query: Record<string, string | undefined>) {
   const [data, total] = await Promise.all([
     prisma.jewelleryReceive.findMany({
       where,
-      include: { vendor: true, issue: true },
+      select: {
+        id: true,
+        vendorId: true,
+        issueId: true,
+        itemName: true,
+        grossWeight: true,
+        stoneWeight: true,
+        netWeight: true,
+        wastage: true,
+        wastagePercent: true,
+        returnedMaterial: true,
+        receiveDate: true,
+        qualityRemarks: true,
+        vendor: { select: { name: true } },
+        issue: { select: { material: true, purity: true, issuedWeight: true } },
+      },
       orderBy: { receiveDate: "desc" },
       skip,
       take: limit,
@@ -77,27 +105,30 @@ export async function listReceives(query: Record<string, string | undefined>) {
   return toPaginatedResult(data, total, page, limit);
 }
 
-export async function createReceive(body: unknown) {
+export async function createReceive(tenantId: string, body: unknown, user?: JWTPayload) {
   const parsed = receiveSchema.safeParse(body);
   if (!parsed.success) {
     return { status: 400 as const, body: { message: "Invalid input", issues: parsed.error.issues } };
   }
   const d = parsed.data;
-  const issue = await prisma.materialIssue.findUnique({
-    where: { id: d.issueId },
+  const issue = await prisma.materialIssue.findFirst({
+    where: { id: d.issueId, ...scopedWhere(tenantId, user) },
     include: { receives: true },
   });
   if (!issue) return { status: 404 as const, body: { message: "Issue not found" } };
 
   const { netWeight, wastage, wastagePercent } = await calcWastage(
+    tenantId,
     d.issueId,
     d.grossWeight,
     d.stoneWeight,
     d.returnedMaterial,
+    user,
   );
 
   const created = await prisma.jewelleryReceive.create({
     data: {
+      tenantId,
       vendorId: d.vendorId,
       issueId: d.issueId,
       itemName: d.itemName,
@@ -113,26 +144,30 @@ export async function createReceive(body: unknown) {
     include: { vendor: true, issue: true },
   });
 
-  const allReceives = await prisma.jewelleryReceive.findMany({ where: { issueId: d.issueId } });
+  const allReceives = await prisma.jewelleryReceive.findMany({
+    where: { issueId: d.issueId, ...scopedWhere(tenantId, user) },
+  });
   const totalReturned = allReceives.reduce((s, r) => s + r.netWeight + r.returnedMaterial, 0);
   if (totalReturned >= issue.issuedWeight * 0.99) {
     await prisma.materialIssue.update({ where: { id: d.issueId }, data: { status: "RETURNED" } });
   }
-  await detectOverdue();
+  await detectOverdue(tenantId, user);
   return { status: 201 as const, body: created };
 }
 
-export async function getReceive(id: string) {
-  const item = await prisma.jewelleryReceive.findUnique({
-    where: { id },
+export async function getReceive(tenantId: string, id: string, user?: JWTPayload) {
+  const item = await prisma.jewelleryReceive.findFirst({
+    where: { id, ...scopedWhere(tenantId, user) },
     include: { vendor: true, issue: true },
   });
   if (!item) return { status: 404 as const, body: { message: "Not found" } };
   return { status: 200 as const, body: item };
 }
 
-export async function updateReceive(id: string, body: unknown) {
-  const existing = await prisma.jewelleryReceive.findUnique({ where: { id } });
+export async function updateReceive(tenantId: string, id: string, body: unknown, user?: JWTPayload) {
+  const existing = await prisma.jewelleryReceive.findFirst({
+    where: { id, ...scopedWhere(tenantId, user) },
+  });
   if (!existing) return { status: 404 as const, body: { message: "Not found" } };
   const parsed = updateSchema.safeParse(body ?? {});
   if (!parsed.success) return { status: 400 as const, body: { message: "Invalid input" } };
@@ -141,10 +176,12 @@ export async function updateReceive(id: string, body: unknown) {
   const stone = parsed.data.stoneWeight ?? existing.stoneWeight;
   const returned = parsed.data.returnedMaterial ?? existing.returnedMaterial;
   const { netWeight, wastage, wastagePercent } = await calcWastage(
+    tenantId,
     existing.issueId,
     gross,
     stone,
     returned,
+    user,
   );
 
   const updated = await prisma.jewelleryReceive.update({
@@ -167,8 +204,10 @@ export async function updateReceive(id: string, body: unknown) {
   return { status: 200 as const, body: updated };
 }
 
-export async function deleteReceive(id: string) {
-  const existing = await prisma.jewelleryReceive.findUnique({ where: { id } });
+export async function deleteReceive(tenantId: string, id: string, user?: JWTPayload) {
+  const existing = await prisma.jewelleryReceive.findFirst({
+    where: { id, ...scopedWhere(tenantId, user) },
+  });
   if (!existing) return { status: 404 as const, body: { message: "Not found" } };
   await prisma.jewelleryReceive.delete({ where: { id } });
   return { status: 200 as const, body: { ok: true } };

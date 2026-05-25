@@ -5,6 +5,9 @@ export type User = {
   email: string;
   name: string;
   role: "ADMIN" | "USER";
+  tenantId: string;
+  tenantSlug: string;
+  memberRole: string;
 };
 
 const USER_KEY = "user";
@@ -54,7 +57,6 @@ export const useAuthStore = create<AuthState>((set) => ({
   hydrate: () => {
     const user = loadUser();
     const token = getStoredToken();
-    // Drop stale profile if token is missing (e.g. cleared storage or expired session).
     if (user && !token) {
       if (typeof window !== "undefined") {
         localStorage.removeItem(USER_KEY);

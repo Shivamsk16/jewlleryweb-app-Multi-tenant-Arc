@@ -3,5 +3,7 @@ import { withAuth, json } from "@/lib/api-helpers";
 import * as reports from "@/lib/services/reports";
 
 export async function GET(req: NextRequest) {
-  return withAuth(req, "reports", async () => json(await reports.reportWastage()));
+  return withAuth(req, "reports", async (user, _req, tenantId) =>
+    json(await reports.reportWastage(tenantId, user)),
+  );
 }

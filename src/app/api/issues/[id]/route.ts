@@ -6,17 +6,17 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params;
-  return withAuth(req, "issues", async () => {
-    const result = await issues.getIssue(id);
+  return withAuth(req, "issues", async (user, _req, tenantId) => {
+    const result = await issues.getIssue(tenantId, id, user);
     return json(result.body, result.status);
   });
 }
 
 export async function PATCH(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params;
-  return withAuth(req, "issues", async () => {
+  return withAuth(req, "issues", async (user, req, tenantId) => {
     const body = await parseJson(req);
-    const result = await issues.updateIssue(id, body);
+    const result = await issues.updateIssue(tenantId, id, body, user);
     return json(result.body, result.status);
   });
 }
@@ -27,8 +27,8 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
 
 export async function DELETE(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params;
-  return withAuth(req, "issues", async () => {
-    const result = await issues.deleteIssue(id);
+  return withAuth(req, "issues", async (user, _req, tenantId) => {
+    const result = await issues.deleteIssue(tenantId, id, user);
     return json(result.body, result.status);
   });
 }

@@ -37,6 +37,7 @@ import { StatCard } from "@/components/stat-card";
 import { formatNumber, formatDateTime, daysBetween } from "@/lib/utils";
 import { api } from "@/lib/api";
 import Link from "next/link";
+import { StatCardSkeleton, TableSkeleton } from "@/components/ui/skeleton";
 
 const CHART_COLORS = ["#2C5F7C", "#D4A574", "#10B981", "#F59E0B", "#EF4444", "#A8B5C4"];
 
@@ -71,12 +72,16 @@ export default function DashboardPage() {
   });
 
   const refresh = () => {
-    summary.refetch();
-    trends.refetch();
-    metalTrends.refetch();
-    dueSoon.refetch();
-    recent.refetch();
+    void Promise.all([
+      summary.refetch(),
+      trends.refetch(),
+      metalTrends.refetch(),
+      dueSoon.refetch(),
+      recent.refetch(),
+    ]);
   };
+
+  const dashboardLoading = summary.isLoading || trends.isLoading;
 
   const now = new Date();
 
@@ -123,6 +128,13 @@ export default function DashboardPage() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {dashboardLoading ? (
+          <>
+            <StatCardSkeleton />
+            <StatCardSkeleton />
+          </>
+        ) : (
+        <>
         <Card className="bg-gradient-to-br from-brand-gold/15 to-brand-secondaryLight border-brand-gold/30">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-semibold text-yellow-800">{t("dashboard.totalGold")}</CardTitle>
@@ -167,9 +179,18 @@ export default function DashboardPage() {
             </div>
           </CardContent>
         </Card>
+        </>
+        )}
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-2 gap-4">
+        {dashboardLoading ? (
+          <>
+            <StatCardSkeleton />
+            <StatCardSkeleton />
+          </>
+        ) : (
+        <>
         <StatCard
           title={t("dashboard.pending")}
           value={`${formatNumber(summary.data?.totalPending ?? 0)} g`}
@@ -184,6 +205,8 @@ export default function DashboardPage() {
           icon={PackageCheck}
           accent="success"
         />
+        </>
+        )}
       </div>
 
       <Card className="border-warning/30">
@@ -200,10 +223,12 @@ export default function DashboardPage() {
           </Link>
         </CardHeader>
         <CardContent className="space-y-2">
-          {(dueSoon.data ?? []).length === 0 && (
+          {dueSoon.isLoading ? (
+            <TableSkeleton rows={4} />
+          ) : (dueSoon.data ?? []).length === 0 ? (
             <div className="text-xs text-textMuted text-center py-4">Nothing due soon</div>
-          )}
-          {(dueSoon.data ?? []).map((i: any) => (
+          ) : (
+          (dueSoon.data ?? []).map((i: any) => (
             <div key={i.id} className="flex items-center justify-between p-2 rounded-md bg-warning/5 text-xs">
               <div>
                 <div className="font-semibold">{i.vendor.name}</div>
@@ -211,7 +236,8 @@ export default function DashboardPage() {
               </div>
               <Badge variant="warning">{daysBetween(now, new Date(i.expectedReturn))}d left</Badge>
             </div>
-          ))}
+          ))
+          )}
         </CardContent>
       </Card>
 

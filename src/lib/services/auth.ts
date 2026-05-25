@@ -2,10 +2,12 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import {
   hashPassword,
+  signSuperAdminToken,
   signToken,
   verifyPassword,
   verifyToken,
   type JWTPayload,
+  type SuperAdminJWTPayload,
 } from "@/lib/auth";
 
 const loginSchema = z.object({
@@ -25,6 +27,59 @@ const profileSchema = z.object({
   email: z.string().email().optional(),
 });
 
+type SessionUser = {
+  id: string;
+  email: string;
+  name: string;
+  role: "ADMIN" | "USER";
+  tenantId: string;
+  tenantSlug: string;
+  memberRole: string;
+};
+
+type SuperAdminSessionUser = {
+  id: string;
+  email: string;
+  name: string;
+  superAdmin: true;
+};
+
+async function resolveActiveMembership(userId: string) {
+  return prisma.tenantMember.findFirst({
+    where: { userId, status: "active" },
+    include: { tenant: true, role: true },
+    orderBy: { joinedAt: "desc" },
+  });
+}
+
+function buildTokenPayload(
+  user: { id: string; email: string; name: string; role: string; superAdmin: boolean },
+  membership: { tenant: { id: string; slug: string }; role: { name: string } },
+): JWTPayload {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role as "ADMIN" | "USER",
+    tenantId: membership.tenant.id,
+    tenantSlug: membership.tenant.slug,
+    memberRole: membership.role.name,
+    superAdmin: user.superAdmin,
+  };
+}
+
+function toSessionUser(payload: JWTPayload): SessionUser {
+  return {
+    id: payload.id,
+    email: payload.email,
+    name: payload.name,
+    role: payload.role,
+    tenantId: payload.tenantId,
+    tenantSlug: payload.tenantSlug,
+    memberRole: payload.memberRole,
+  };
+}
+
 export async function login(body: unknown) {
   const parsed = loginSchema.safeParse(body);
   if (!parsed.success) return { status: 400 as const, body: { message: "Invalid input" } };
@@ -34,17 +89,43 @@ export async function login(body: unknown) {
     return { status: 401 as const, body: { message: "Invalid credentials" } };
   }
 
-  const token = signToken({
-    id: user.id,
-    email: user.email,
-    name: user.name,
-    role: user.role as "ADMIN" | "USER",
-  });
+  if (user.superAdmin === true) {
+    const payload: SuperAdminJWTPayload = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      superAdmin: true,
+      isSuperAdminSession: true,
+    };
+    const token = signSuperAdminToken(payload);
+    const superAdminUser: SuperAdminSessionUser = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      superAdmin: true,
+    };
+    return {
+      status: 200 as const,
+      body: {
+        user: superAdminUser,
+        token,
+        isSuperAdmin: true,
+      },
+    };
+  }
+
+  const membership = await resolveActiveMembership(user.id);
+  if (!membership) {
+    return { status: 403 as const, body: { message: "No active tenant membership" } };
+  }
+
+  const tokenPayload = buildTokenPayload(user, membership);
+  const token = signToken(tokenPayload);
 
   return {
     status: 200 as const,
     body: {
-      user: { id: user.id, email: user.email, name: user.name, role: user.role },
+      user: toSessionUser(tokenPayload),
       token,
     },
   };
@@ -53,12 +134,21 @@ export async function login(body: unknown) {
 export async function me(token: string | null) {
   if (!token) return { user: null };
   const payload = verifyToken(token);
-  if (!payload) return { user: null };
+  if (!payload?.tenantId) return { user: null };
   const user = await prisma.user.findUnique({
     where: { id: payload.id },
     select: { id: true, email: true, name: true, role: true },
   });
-  return { user };
+  if (!user) return { user: null };
+  return {
+    user: {
+      ...user,
+      role: user.role as "ADMIN" | "USER",
+      tenantId: payload.tenantId,
+      tenantSlug: payload.tenantSlug,
+      memberRole: payload.memberRole,
+    },
+  };
 }
 
 export async function updateProfile(user: JWTPayload, body: unknown) {
@@ -76,17 +166,21 @@ export async function updateProfile(user: JWTPayload, body: unknown) {
       ...(parsed.data.name && { name: parsed.data.name }),
       ...(parsed.data.email && { email: parsed.data.email }),
     },
-    select: { id: true, email: true, name: true, role: true },
+    select: { id: true, email: true, name: true, role: true, superAdmin: true },
   });
 
-  const token = signToken({
-    id: updated.id,
-    email: updated.email,
-    name: updated.name,
-    role: updated.role as "ADMIN" | "USER",
-  });
+  const membership = await resolveActiveMembership(updated.id);
+  if (!membership) {
+    return { status: 403 as const, body: { message: "No active tenant membership" } };
+  }
 
-  return { status: 200 as const, body: { user: updated, token } };
+  const tokenPayload = buildTokenPayload(updated, membership);
+  const token = signToken(tokenPayload);
+
+  return {
+    status: 200 as const,
+    body: { user: toSessionUser(tokenPayload), token },
+  };
 }
 
 export async function createUser(body: unknown) {

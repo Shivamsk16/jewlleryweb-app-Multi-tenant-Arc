@@ -1,9 +1,8 @@
+import type { JWTPayload } from "@/lib/auth";
 import { prisma } from "./prisma";
+import { scopedWhere } from "./tenant-scope";
 
-// =====================================================
-// Stock Calculations
-// =====================================================
-export type StockKey = string; // `${material}|${purity}`
+export type StockKey = string;
 
 export type StockEntry = {
   material: string;
@@ -14,12 +13,14 @@ export type StockEntry = {
   available: number;
 };
 
-export async function computeStock(): Promise<StockEntry[]> {
-  const [purchases, issues, receives] = await Promise.all([
-    prisma.rawMaterialPurchase.findMany({ where: { isDeleted: false } }),
-    prisma.materialIssue.findMany(),
-    prisma.jewelleryReceive.findMany(),
-  ]);
+export async function computeStock(tenantId: string, user?: JWTPayload): Promise<StockEntry[]> {
+  const tenantFilter = scopedWhere(tenantId, user);
+  // Sequential queries: safe when pool connection_limit is low (Supabase transaction pooler)
+  const purchases = await prisma.rawMaterialPurchase.findMany({
+    where: { ...tenantFilter, isDeleted: false },
+  });
+  const issues = await prisma.materialIssue.findMany({ where: tenantFilter });
+  const receives = await prisma.jewelleryReceive.findMany({ where: tenantFilter });
 
   const map = new Map<StockKey, StockEntry>();
   const get = (material: string, purity: string): StockEntry => {
@@ -53,15 +54,17 @@ export async function computeStock(): Promise<StockEntry[]> {
   );
 }
 
-export async function getAvailableStock(material: string, purity: string): Promise<number> {
-  const stock = await computeStock();
+export async function getAvailableStock(
+  tenantId: string,
+  material: string,
+  purity: string,
+  user?: JWTPayload,
+): Promise<number> {
+  const stock = await computeStock(tenantId, user);
   const found = stock.find((s) => s.material === material && s.purity === purity);
   return found ? found.available : 0;
 }
 
-// =====================================================
-// Vendor balance
-// =====================================================
 export type VendorBalance = {
   vendorId: string;
   vendorName: string;
@@ -73,8 +76,12 @@ export type VendorBalance = {
   wastagePercent: number;
 };
 
-export async function computeVendorBalances(): Promise<VendorBalance[]> {
+export async function computeVendorBalances(
+  tenantId: string,
+  user?: JWTPayload,
+): Promise<VendorBalance[]> {
   const vendors = await prisma.vendor.findMany({
+    where: scopedWhere(tenantId, user),
     include: {
       issues: { include: { receives: true } },
     },
@@ -108,13 +115,11 @@ export async function computeVendorBalances(): Promise<VendorBalance[]> {
   });
 }
 
-// =====================================================
-// Overdue detection — also flips status to OVERDUE
-// =====================================================
-export async function detectOverdue(): Promise<void> {
+export async function detectOverdue(tenantId: string, user?: JWTPayload): Promise<void> {
+  const tenantFilter = scopedWhere(tenantId, user);
   const now = new Date();
   const pendings = await prisma.materialIssue.findMany({
-    where: { status: "PENDING" },
+    where: { ...tenantFilter, status: "PENDING" },
     include: { receives: true, vendor: true },
   });
 
@@ -124,11 +129,16 @@ export async function detectOverdue(): Promise<void> {
     if (i.expectedReturn < now && balance > 0) {
       await prisma.materialIssue.update({ where: { id: i.id }, data: { status: "OVERDUE" } });
       const exists = await prisma.notification.findFirst({
-        where: { type: "OVERDUE", link: "/reminders?tab=overdue" },
+        where: {
+          ...tenantFilter,
+          type: "OVERDUE",
+          link: "/reminders?tab=overdue",
+        },
       });
       if (!exists) {
         await prisma.notification.create({
           data: {
+            tenantId,
             type: "OVERDUE",
             title: "Issue overdue",
             message: `Issue to ${i.vendor.name} (${i.issuedWeight}g ${i.material} ${i.purity}) is overdue.`,

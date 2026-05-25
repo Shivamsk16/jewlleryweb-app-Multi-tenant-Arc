@@ -20,6 +20,7 @@ import {
 import { formatDate, formatNumber, daysBetween, tableSerialNumber } from "@/lib/utils";
 import type { PaginatedResult } from "@/lib/pagination";
 import { api } from "@/lib/api";
+import { TableSkeleton } from "@/components/ui/skeleton";
 
 type Issue = {
   id: string;
@@ -65,7 +66,14 @@ function RemindersContent() {
   const dueSoon = (allIssues.data ?? []).filter(isDueSoon);
   const allActive = (allIssues.data ?? []).filter((i) => i.status !== "RETURNED");
 
-  const renderTable = (items: Issue[], mode: "overdue" | "due-soon" | "all") => (
+  const renderTable = (
+    items: Issue[],
+    mode: "overdue" | "due-soon" | "all",
+    loading = false,
+  ) =>
+    loading ? (
+      <TableSkeleton rows={8} />
+    ) : (
     <Table>
       <TableHeader>
         <TableRow>
@@ -126,7 +134,7 @@ function RemindersContent() {
         })}
       </TableBody>
     </Table>
-  );
+    );
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -163,7 +171,7 @@ function RemindersContent() {
               </CardTitle>
               <CardDescription>All pending material issues</CardDescription>
             </CardHeader>
-            <CardContent>{renderTable(allActive, "all")}</CardContent>
+            <CardContent>{renderTable(allActive, "all", allIssues.isLoading)}</CardContent>
           </Card>
         </TabsContent>
 
@@ -177,7 +185,7 @@ function RemindersContent() {
               </CardTitle>
               <CardDescription>Issues past their expected return date</CardDescription>
             </CardHeader>
-            <CardContent>{renderTable(overdue.data ?? [], "overdue")}</CardContent>
+            <CardContent>{renderTable(overdue.data ?? [], "overdue", overdue.isLoading)}</CardContent>
           </Card>
         </TabsContent>
 
@@ -191,7 +199,7 @@ function RemindersContent() {
               </CardTitle>
               <CardDescription>Issues that need attention soon</CardDescription>
             </CardHeader>
-            <CardContent>{renderTable(dueSoon, "due-soon")}</CardContent>
+            <CardContent>{renderTable(dueSoon, "due-soon", allIssues.isLoading)}</CardContent>
           </Card>
         </TabsContent>
       </Tabs>
@@ -201,7 +209,7 @@ function RemindersContent() {
 
 export default function RemindersPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-textMuted">Loading...</div>}>
+    <Suspense fallback={<div className="p-6"><TableSkeleton rows={8} /></div>}>
       <RemindersContent />
     </Suspense>
   );

@@ -45,7 +45,7 @@ export function StatCard({ title, value, subtitle, icon: Icon, accent = "primary
       <CardContent className="pt-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <div className="text-[11px] uppercase tracking-wider font-semibold text-textSecondary truncate">
+            <div className="text-[11px] uppercase tracking-wider font-semibold text-textSecondary leading-tight">
               {title}
             </div>
             <div className="font-display text-2xl font-bold mt-1 tabular-nums text-textPrimary">

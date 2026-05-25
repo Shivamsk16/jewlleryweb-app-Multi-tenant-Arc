@@ -34,6 +34,7 @@ import { useToast } from "@/components/ui/toast";
 import type { PaginatedResult } from "@/lib/pagination";
 import { tableSerialNumber } from "@/lib/utils";
 import { api, apiFetch } from "@/lib/api";
+import { CardSkeleton, TableSkeleton } from "@/components/ui/skeleton";
 
 type Vendor = {
   id: string;
@@ -124,6 +125,10 @@ export default function VendorsPage() {
       {view === "list" ? (
         <Card>
           <CardContent className="pt-4">
+            {list.isLoading ? (
+              <TableSkeleton rows={8} />
+            ) : (
+            <>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -135,14 +140,7 @@ export default function VendorsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {list.isLoading && (
-                  <TableRow>
-                    <TableCell colSpan={5} className="text-center py-8 text-textMuted">
-                      {t("common.loading")}
-                    </TableCell>
-                  </TableRow>
-                )}
-                {!list.isLoading && rows.length === 0 && (
+                {rows.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={5} className="text-center py-8 text-textMuted">
                       {debouncedSearch ? "No results found" : t("common.noData")}
@@ -179,18 +177,26 @@ export default function VendorsPage() {
                 onPageChange={setPage}
               />
             )}
+            </>
+            )}
           </CardContent>
         </Card>
       ) : (
         <>
           {list.isLoading && (
-            <div className="text-center py-10 text-textMuted">{t("common.loading")}</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <CardSkeleton key={i} />
+              ))}
+            </div>
           )}
           {!list.isLoading && rows.length === 0 && (
             <div className="text-center py-10 text-textMuted">
               {debouncedSearch ? "No results found" : t("common.noData")}
             </div>
           )}
+          {!list.isLoading && (
+            <>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {rows.map((v) => (
               <Link key={v.id} href={`/vendors/${v.id}`}>
@@ -246,6 +252,8 @@ export default function VendorsPage() {
               limit={meta.limit}
               onPageChange={setPage}
             />
+          )}
+            </>
           )}
         </>
       )}

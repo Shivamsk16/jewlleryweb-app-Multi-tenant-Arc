@@ -31,6 +31,7 @@ import { Pagination } from "@/components/ui/pagination";
 import { TableSearch, useDebouncedValue } from "@/components/ui/table-search";
 import type { PaginatedResult } from "@/lib/pagination";
 import { api, apiFetch } from "@/lib/api";
+import { TableSkeleton } from "@/components/ui/skeleton";
 
 type Receive = {
   id: string;
@@ -124,6 +125,9 @@ export default function ReceivesPage() {
           </div>
         </CardHeader>
         <CardContent>
+          {list.isLoading ? (
+            <TableSkeleton rows={8} />
+          ) : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -140,14 +144,7 @@ export default function ReceivesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {list.isLoading && (
-                <TableRow>
-                  <TableCell colSpan={10} className="text-center py-8 text-textMuted">
-                    {t("common.loading")}
-                  </TableCell>
-                </TableRow>
-              )}
-              {!list.isLoading && receives.length === 0 && (
+              {receives.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={10} className="text-center py-8 text-textMuted">
                     {debouncedSearch ? "No results found" : t("common.noData")}
@@ -210,7 +207,8 @@ export default function ReceivesPage() {
               ))}
             </TableBody>
           </Table>
-          {listMeta && (
+          )}
+          {listMeta && !list.isLoading && (
             <Pagination
               page={listMeta.page}
               totalPages={listMeta.totalPages}

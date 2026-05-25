@@ -9,16 +9,181 @@ datasource db {
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
+
+// ============================================================
+// TENANT (multi-tenant SaaS)
+// ============================================================
+model Tenant {
+  id          String    @id @default(uuid())
+  name        String
+  slug        String    @unique
+  plan        String    @default("trial")
+  planId      String?
+  status      String    @default("pending")
+  trialEndsAt DateTime?
+  deletedAt   DateTime?
+  suspendedAt DateTime?
+  suspendedReason String?
+  monthlyRevenue Float   @default(0)
+  maxUsers    Int       @default(5)
+  maxVendors  Int       @default(10)
+  createdAt   DateTime  @default(now())
+
+  plan_ref     Plan?      @relation(fields: [planId], references: [id])
+  members      TenantMember[]
+  roles        Role[]
+  invitations  Invitation[]
+  auditLogs    AuditLog[]
+  impersonationSessions ImpersonationSession[]
+  vendors      Vendor[]
+  purchases    RawMaterialPurchase[]
+  issues       MaterialIssue[]
+  receives     JewelleryReceive[]
+  notifications Notification[]
+
+  @@index([slug])
+  @@index([status])
+  @@index([deletedAt])
+  @@index([suspendedAt])
+}
+
+model TenantMember {
+  id        String    @id @default(uuid())
+  userId    String
+  tenantId  String
+  roleId    String
+  status    String    @default("invited")
+  invitedAt DateTime  @default(now())
+  joinedAt  DateTime?
+
+  user   User   @relation(fields: [userId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  role   Role   @relation(fields: [roleId], references: [id])
+
+  @@unique([userId, tenantId])
+  @@index([userId])
+  @@index([tenantId])
+  @@index([status])
+}
+
+model Role {
+  id           String   @id @default(uuid())
+  tenantId     String?
+  name         String
+  permissions  Json
+  isSystemRole Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  tenant      Tenant?        @relation(fields: [tenantId], references: [id])
+  members     TenantMember[]
+  invitations Invitation[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@index([name])
+}
+
+model Invitation {
+  id        String   @id @default(uuid())
+  tenantId  String
+  invitedBy String
+  roleId    String
+  email     String
+  token     String   @unique
+  status    String   @default("pending")
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  tenant  Tenant @relation(fields: [tenantId], references: [id])
+  inviter User   @relation("InvitedBy", fields: [invitedBy], references: [id])
+  role    Role   @relation(fields: [roleId], references: [id])
+
+  @@index([tenantId])
+  @@index([token])
+  @@index([status])
+  @@index([email])
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  actorId      String
+  tenantId     String?
+  action       String
+  resourceType String
+  resourceId   String?
+  beforeState  Json?
+  afterState   Json?
+  ipAddress    String?
+  createdAt    DateTime @default(now())
+
+  actor  User    @relation("AuditActor", fields: [actorId], references: [id])
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
+
+  @@index([actorId])
+  @@index([tenantId])
+  @@index([action])
+  @@index([resourceType])
+  @@index([createdAt])
+}
+
+model Plan {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  displayName  String
+  priceMonthly Float    @default(0)
+  priceYearly  Float    @default(0)
+  maxUsers     Int      @default(5)
+  maxVendors   Int      @default(10)
+  trialDays    Int      @default(14)
+  features     Json
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  tenants      Tenant[]
+
+  @@index([name])
+  @@index([isActive])
+}
+
+model ImpersonationSession {
+  id                 String    @id @default(uuid())
+  superAdminId       String
+  targetTenantId     String
+  impersonatedUserId String
+  token              String    @unique
+  createdAt          DateTime  @default(now())
+  expiresAt          DateTime
+  endedAt            DateTime?
+  ipAddress          String?
+
+  superAdmin       User   @relation("SuperAdminSessions", fields: [superAdminId], references: [id])
+  targetTenant     Tenant @relation(fields: [targetTenantId], references: [id])
+  impersonatedUser User   @relation("ImpersonatedSessions", fields: [impersonatedUserId], references: [id])
+
+  @@index([superAdminId])
+  @@index([targetTenantId])
+  @@index([token])
+  @@index([expiresAt])
+}
+
 // ============================================================
 // USER
 // ============================================================
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  name      String
-  role      String   @default("USER") // ADMIN | USER
-  createdAt DateTime @default(now())
+  id             String   @id @default(uuid())
+  email          String   @unique
+  password       String
+  name           String
+  role           String   @default("USER") // ADMIN | USER — deprecated, use memberRole
+  superAdmin     Boolean  @default(false)
+  emailVerified  Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  memberships TenantMember[]
+  invitations Invitation[]   @relation("InvitedBy")
+  auditLogs     AuditLog[]     @relation("AuditActor")
+  superAdminSessions ImpersonationSession[] @relation("SuperAdminSessions")
+  impersonatedSessions ImpersonationSession[] @relation("ImpersonatedSessions")
 }
 
 // ============================================================
@@ -26,6 +191,8 @@ model User {
 // ============================================================
 model Vendor {
   id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
   name      String
   contact   String?
   phone     String?
@@ -36,6 +203,13 @@ model Vendor {
 
   issues   MaterialIssue[]
   receives JewelleryReceive[]
+
+  @@index([tenantId])
+  @@index([isActive])
+  @@index([createdAt])
+  @@index([name])
+  @@index([phone])
+  @@index([specialty])
 }
 
 // ============================================================
@@ -43,8 +217,10 @@ model Vendor {
 // ============================================================
 model RawMaterialPurchase {
   id           String   @id @default(uuid())
-  material     String   // GOLD | SILVER
-  purity       String   // "24K","22K","18K","14K","925","999"
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+  material     String
+  purity       String
   grossWeight  Float
   netWeight    Float
   ratePerGram  Float
@@ -55,6 +231,14 @@ model RawMaterialPurchase {
   notes        String?  @db.Text
   isDeleted    Boolean  @default(false)
   createdAt    DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([isDeleted])
+  @@index([material])
+  @@index([purchaseDate])
+  @@index([createdAt])
+  @@index([vendorName])
+  @@index([invoiceNo])
 }
 
 // ============================================================
@@ -62,42 +246,56 @@ model RawMaterialPurchase {
 // ============================================================
 model MaterialIssue {
   id             String   @id @default(uuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id])
   vendorId       String
   vendor         Vendor   @relation(fields: [vendorId], references: [id])
-  material       String   // GOLD | SILVER
+  material       String
   purity         String
   issuedWeight   Float
-  // Note: @default(now()) on expectedReturn is harmless because every create
-  // call always supplies an explicit value, but it satisfies the "all DateTime
-  // fields have @default(now())" requirement.
   expectedReturn DateTime @default(now())
-  purpose        String?  // Making Order | Sample | Repair
+  purpose        String?
   issueDate      DateTime @default(now())
-  status         String   @default("PENDING") // PENDING | RETURNED | OVERDUE
+  status         String   @default("PENDING")
   notes          String?  @db.Text
   fileUrl        String?
 
   receives JewelleryReceive[]
+
+  @@index([tenantId])
+  @@index([vendorId])
+  @@index([status])
+  @@index([issueDate])
+  @@index([expectedReturn])
+  @@index([material])
 }
 
 // ============================================================
 // JEWELLERY RECEIVE (from vendor)
 // ============================================================
 model JewelleryReceive {
-  id               String   @id @default(uuid())
+  id               String        @id @default(uuid())
+  tenantId         String
+  tenant           Tenant        @relation(fields: [tenantId], references: [id])
   vendorId         String
-  vendor           Vendor   @relation(fields: [vendorId], references: [id])
+  vendor           Vendor        @relation(fields: [vendorId], references: [id])
   issueId          String
   issue            MaterialIssue @relation(fields: [issueId], references: [id])
   itemName         String
   grossWeight      Float
-  stoneWeight      Float    @default(0)
+  stoneWeight      Float         @default(0)
   netWeight        Float
   wastage          Float
   wastagePercent   Float
-  returnedMaterial Float    @default(0)
-  receiveDate      DateTime @default(now())
-  qualityRemarks   String?  @db.Text
+  returnedMaterial Float         @default(0)
+  receiveDate      DateTime      @default(now())
+  qualityRemarks   String?       @db.Text
+
+  @@index([tenantId])
+  @@index([vendorId])
+  @@index([issueId])
+  @@index([receiveDate])
+  @@index([itemName])
 }
 
 // ============================================================
@@ -105,12 +303,19 @@ model JewelleryReceive {
 // ============================================================
 model Notification {
   id        String   @id @default(uuid())
-  type      String   // OVERDUE | DUE_SOON | LOW_STOCK | INFO
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  type      String
   title     String
   message   String   @db.Text
   link      String?
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([type])
+  @@index([isRead])
+  @@index([createdAt])
 }
 
 model ActivityLog {
@@ -121,4 +326,9 @@ model ActivityLog {
   module    String
   details   String?  @db.Text
   createdAt DateTime @default(now())
+
+  @@index([userName])
+  @@index([module])
+  @@index([createdAt])
+  @@index([action])
 }

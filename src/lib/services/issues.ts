@@ -1,7 +1,9 @@
 import { z } from "zod";
+import type { JWTPayload } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { detectOverdue, getAvailableStock } from "@/lib/business";
 import { parsePagination, toPaginatedResult } from "@/lib/pagination";
+import { scopedWhere } from "@/lib/tenant-scope";
 import { supabase } from "@/lib/supabase";
 
 function issueDateRangeFromSearch(search: string): { gte: Date; lte: Date } | null {
@@ -49,10 +51,14 @@ const uploadSchema = z.object({
   fileData: z.string().min(1),
 });
 
-export async function listIssues(query: Record<string, string | undefined>) {
-  await detectOverdue();
+export async function listIssues(
+  tenantId: string,
+  query: Record<string, string | undefined>,
+  user?: JWTPayload,
+) {
+  await detectOverdue(tenantId, user);
   const { status, vendorId, search } = query;
-  const where: Record<string, unknown> = {};
+  const where: Record<string, unknown> = scopedWhere(tenantId, user);
   if (status && status !== "ALL") where.status = status;
   if (vendorId) where.vendorId = vendorId;
   if (search?.trim()) {
@@ -69,10 +75,26 @@ export async function listIssues(query: Record<string, string | undefined>) {
     where.OR = or;
   }
   const { page, limit, skip } = parsePagination(query);
+  const issueListSelect = {
+    id: true,
+    vendorId: true,
+    material: true,
+    purity: true,
+    issuedWeight: true,
+    expectedReturn: true,
+    issueDate: true,
+    status: true,
+    purpose: true,
+    fileUrl: true,
+    notes: true,
+    vendor: { select: { id: true, name: true } },
+    receives: { select: { netWeight: true, returnedMaterial: true } },
+  } as const;
+
   const [data, total] = await Promise.all([
     prisma.materialIssue.findMany({
       where,
-      include: { vendor: true, receives: true },
+      select: issueListSelect,
       orderBy: { issueDate: "desc" },
       skip,
       take: limit,
@@ -82,13 +104,18 @@ export async function listIssues(query: Record<string, string | undefined>) {
   return toPaginatedResult(data, total, page, limit);
 }
 
-export async function createIssue(body: unknown) {
+export async function createIssue(tenantId: string, body: unknown, user?: JWTPayload) {
   const parsed = issueSchema.safeParse(body);
   if (!parsed.success) {
     return { status: 400 as const, body: { message: "Invalid input", issues: parsed.error.issues } };
   }
   const d = parsed.data;
-  const available = await getAvailableStock(d.material, d.purity);
+  const vendor = await prisma.vendor.findFirst({
+    where: { id: d.vendorId, ...scopedWhere(tenantId, user) },
+  });
+  if (!vendor) return { status: 404 as const, body: { message: "Vendor not found" } };
+
+  const available = await getAvailableStock(tenantId, d.material, d.purity, user);
   if (d.issuedWeight > available) {
     return {
       status: 400 as const,
@@ -97,6 +124,7 @@ export async function createIssue(body: unknown) {
   }
   const created = await prisma.materialIssue.create({
     data: {
+      tenantId,
       vendorId: d.vendorId,
       material: d.material,
       purity: d.purity,
@@ -112,16 +140,20 @@ export async function createIssue(body: unknown) {
   return { status: 201 as const, body: created };
 }
 
-export async function getIssue(id: string) {
-  const issue = await prisma.materialIssue.findUnique({
-    where: { id },
+export async function getIssue(tenantId: string, id: string, user?: JWTPayload) {
+  const issue = await prisma.materialIssue.findFirst({
+    where: { id, ...scopedWhere(tenantId, user) },
     include: { vendor: true, receives: true },
   });
   if (!issue) return { status: 404 as const, body: { message: "Not found" } };
   return { status: 200 as const, body: issue };
 }
 
-export async function updateIssue(id: string, body: unknown) {
+export async function updateIssue(tenantId: string, id: string, body: unknown, user?: JWTPayload) {
+  const existing = await prisma.materialIssue.findFirst({
+    where: { id, ...scopedWhere(tenantId, user) },
+  });
+  if (!existing) return { status: 404 as const, body: { message: "Not found" } };
   const parsed = updateSchema.safeParse(body ?? {});
   if (!parsed.success) return { status: 400 as const, body: { message: "Invalid input" } };
   const b = parsed.data;
@@ -143,9 +175,9 @@ export async function updateIssue(id: string, body: unknown) {
   return { status: 200 as const, body: updated };
 }
 
-export async function deleteIssue(id: string) {
-  const issue = await prisma.materialIssue.findUnique({
-    where: { id },
+export async function deleteIssue(tenantId: string, id: string, user?: JWTPayload) {
+  const issue = await prisma.materialIssue.findFirst({
+    where: { id, ...scopedWhere(tenantId, user) },
     include: { receives: true },
   });
   if (!issue) return { status: 404 as const, body: { message: "Not found" } };
@@ -156,7 +188,7 @@ export async function deleteIssue(id: string) {
   return { status: 200 as const, body: { ok: true } };
 }
 
-export async function uploadIssueFile(body: unknown) {
+export async function uploadIssueFile(_tenantId: string, body: unknown) {
   const parsed = uploadSchema.safeParse(body);
   if (!parsed.success) return { status: 400 as const, body: { message: "Invalid file data" } };
   const { fileName, fileType, fileData } = parsed.data;
@@ -200,11 +232,23 @@ export async function uploadIssueFile(body: unknown) {
   return { status: 200 as const, body: { fileUrl: dataUrl } };
 }
 
-export async function listOverdueIssues() {
-  await detectOverdue();
+export async function listOverdueIssues(tenantId: string, user?: JWTPayload) {
+  await detectOverdue(tenantId, user);
   return prisma.materialIssue.findMany({
-    where: { status: "OVERDUE" },
-    include: { vendor: true, receives: true },
+    where: { ...scopedWhere(tenantId, user), status: "OVERDUE" },
+    select: {
+      id: true,
+      vendorId: true,
+      material: true,
+      purity: true,
+      issuedWeight: true,
+      expectedReturn: true,
+      issueDate: true,
+      status: true,
+      vendor: { select: { name: true } },
+      receives: { select: { netWeight: true, returnedMaterial: true } },
+    },
     orderBy: { expectedReturn: "asc" },
+    take: 200,
   });
 }

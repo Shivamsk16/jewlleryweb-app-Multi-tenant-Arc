@@ -33,6 +33,7 @@ import { IssueFileUpload } from "@/components/issues/issue-file-upload";
 import type { PaginatedResult } from "@/lib/pagination";
 import { formatNumber, formatDate, tableSerialNumber } from "@/lib/utils";
 import { api, apiFetch } from "@/lib/api";
+import { TableSkeleton } from "@/components/ui/skeleton";
 
 type Issue = {
   id: string;
@@ -137,6 +138,9 @@ export default function IssuesPage() {
           </div>
         </CardHeader>
         <CardContent>
+          {list.isLoading ? (
+            <TableSkeleton rows={8} />
+          ) : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -155,14 +159,7 @@ export default function IssuesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {list.isLoading && (
-                <TableRow>
-                  <TableCell colSpan={12} className="text-center py-8 text-textMuted">
-                    {t("common.loading")}
-                  </TableCell>
-                </TableRow>
-              )}
-              {!list.isLoading && issues.length === 0 && (
+              {issues.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={12} className="text-center py-8 text-textMuted">
                     {debouncedSearch || statusFilter !== "ALL"
@@ -263,7 +260,8 @@ export default function IssuesPage() {
               })}
             </TableBody>
           </Table>
-          {listMeta && (
+          )}
+          {listMeta && !list.isLoading && (
             <Pagination
               page={listMeta.page}
               totalPages={listMeta.totalPages}

@@ -21,6 +21,7 @@ import {
 import { StatCard } from "@/components/stat-card";
 import { formatDate, formatNumber, tableSerialNumber } from "@/lib/utils";
 import { api } from "@/lib/api";
+import { StatCardSkeleton, TableSkeleton } from "@/components/ui/skeleton";
 
 export default function VendorDetailPage({ params }: { params: { id: string } }) {
   const { t } = useTranslation();
@@ -70,7 +71,20 @@ export default function VendorDetailPage({ params }: { params: { id: string } })
     URL.revokeObjectURL(url);
   };
 
-  if (!detail.data) return <div className="text-textMuted">{t("common.loading")}</div>;
+  if (detail.isLoading) {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <StatCardSkeleton />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <StatCardSkeleton />
+          <StatCardSkeleton />
+          <StatCardSkeleton />
+        </div>
+        <TableSkeleton rows={8} />
+      </div>
+    );
+  }
+  if (!detail.data) return <div className="text-textMuted">{t("common.noData")}</div>;
   const v = detail.data;
 
   return (

@@ -11,11 +11,15 @@ export async function listLogs(
   const { user: userFilter, module, from, to, search } = query;
   const where: Record<string, unknown> = scopedWhere(tenantId, user, {});
   if (userFilter) {
-    const actor = await prisma.user.findFirst({
-      where: { name: { contains: userFilter, mode: "insensitive" } },
-      select: { id: true },
+    const actor = await prisma.tenantMember.findFirst({
+      where: {
+        tenantId,
+        status: "active",
+        user: { name: { contains: userFilter, mode: "insensitive" } },
+      },
+      select: { userId: true },
     });
-    if (actor) where.actorId = actor.id;
+    if (actor) where.actorId = actor.userId;
   }
   if (module && module !== "ALL") where.resourceType = module;
   if (from || to) {

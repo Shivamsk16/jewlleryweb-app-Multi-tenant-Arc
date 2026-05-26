@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const COOKIE_NAME = "jewelflow_token";
 const SA_COOKIE_NAME = "jewelflow_sa_token";
+const IMPERSONATION_COOKIE_NAME = "jewelflow_impersonation_token";
 
 type TenantClaims = {
   tenantId?: string;
@@ -22,6 +23,21 @@ const PROTECTED_PREFIXES = [
 ];
 const SA_PROTECTED_PREFIXES = ["/super-admin"];
 
+/** Tenant app API routes that require a verified tenant context. */
+const API_TENANT_PREFIXES = [
+  "/api/vendors",
+  "/api/materials",
+  "/api/issues",
+  "/api/receives",
+  "/api/dashboard",
+  "/api/reports",
+  "/api/notifications",
+  "/api/logs",
+  "/api/auth/users",
+  "/api/auth/create-user",
+  "/api/auth/profile",
+];
+
 /** Decode JWT payload only (no verification) — safe for Edge middleware. */
 function decodeJwtPayload(token: string): TenantClaims | null {
   try {
@@ -38,8 +54,25 @@ function decodeJwtPayload(token: string): TenantClaims | null {
   }
 }
 
+function attachTenantHeaders(req: NextRequest, payload: TenantClaims): NextResponse {
+  const requestHeaders = new Headers(req.headers);
+  if (payload.tenantId) requestHeaders.set("x-tenant-id", payload.tenantId);
+  if (payload.tenantSlug) requestHeaders.set("x-tenant-slug", payload.tenantSlug);
+  return NextResponse.next({ request: { headers: requestHeaders } });
+}
+
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
+
+  if (API_TENANT_PREFIXES.some((p) => pathname.startsWith(p))) {
+    const token =
+      req.cookies.get(IMPERSONATION_COOKIE_NAME)?.value ??
+      req.cookies.get(COOKIE_NAME)?.value;
+    if (token) {
+      const payload = decodeJwtPayload(token);
+      if (payload?.tenantId) return attachTenantHeaders(req, payload);
+    }
+  }
 
   const isSuperAdminRoute =
     SA_PROTECTED_PREFIXES.some((p) => pathname.startsWith(p)) &&
@@ -73,10 +106,7 @@ export function middleware(req: NextRequest) {
 
   const payload = decodeJwtPayload(token);
   if (payload?.tenantId && payload?.tenantSlug) {
-    const requestHeaders = new Headers(req.headers);
-    requestHeaders.set("x-tenant-id", payload.tenantId);
-    requestHeaders.set("x-tenant-slug", payload.tenantSlug);
-    return NextResponse.next({ request: { headers: requestHeaders } });
+    return attachTenantHeaders(req, payload);
   }
 
   return NextResponse.next();
@@ -84,6 +114,7 @@ export function middleware(req: NextRequest) {
 
 export const config = {
   matcher: [
+    "/api/:path*",
     "/super-admin/:path*",
     "/dashboard/:path*",
     "/materials/:path*",

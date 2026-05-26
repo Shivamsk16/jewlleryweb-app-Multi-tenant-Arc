@@ -180,14 +180,29 @@ async function main() {
     },
   });
 
-  await prisma.tenantMember.create({
-    data: {
-      userId: adminUser.id,
-      tenantId: demoTenant.id,
-      roleId: adminRole.id,
-      status: "active",
-      joinedAt: new Date(),
-    },
+  const staffUser = await prisma.user.findUnique({ where: { email: "user@jewelflow.in" } });
+
+  await prisma.tenantMember.createMany({
+    data: [
+      {
+        userId: adminUser.id,
+        tenantId: demoTenant.id,
+        roleId: adminRole.id,
+        status: "active",
+        joinedAt: new Date(),
+      },
+      ...(staffUser
+        ? [
+            {
+              userId: staffUser.id,
+              tenantId: demoTenant.id,
+              roleId: editorRole.id,
+              status: "active",
+              joinedAt: new Date(),
+            },
+          ]
+        : []),
+    ],
   });
 
   console.log("Users created (admin@jewelflow.in / Admin@123, user@jewelflow.in / User@123)");

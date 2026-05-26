@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { JWTPayload, SuperAdminJWTPayload } from "@/lib/auth";
-import { requireAdmin, requireAuth, requireSuperAdmin } from "@/lib/auth";
 import { logIfMutating } from "@/lib/activity-log";
 import { writeAuditLog } from "@/lib/activity-log";
+import {
+  requireAdmin,
+  requireAuth,
+  requireSuperAdmin,
+  requireTenantAdmin,
+  requireTenantContext,
+} from "@/lib/authorization";
+import { resolveTenantId } from "@/lib/tenant-scope";
 
 export function json<T>(data: T, status = 200) {
   return NextResponse.json(data, { status });
@@ -34,12 +41,17 @@ export function queryRecord(req: NextRequest): Record<string, string | undefined
   return out;
 }
 
-/** Prefer middleware header; fall back to verified JWT for /api routes. */
-export function getTenantId(req: NextRequest): string | null {
-  const fromHeader = req.headers.get("x-tenant-id");
-  if (fromHeader) return fromHeader;
-  const user = requireAuth(req);
-  return user?.tenantId ?? null;
+/** @deprecated Use requireTenantContext; kept for any legacy callers */
+export function getTenantId(req: NextRequest, user: JWTPayload): string | null {
+  return resolveTenantId(req, user);
+}
+
+export function getClientIp(req: NextRequest): string | undefined {
+  return (
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    req.headers.get("x-real-ip") ??
+    undefined
+  );
 }
 
 type Handler = (
@@ -60,8 +72,11 @@ export async function withAuth(
 ): Promise<NextResponse> {
   const user = requireAuth(req);
   if (!user) return error("Unauthorized", 401);
-  const tenantId = getTenantId(req);
-  if (!tenantId) return error("No tenant context", 403);
+
+  const ctx = await requireTenantContext(req, user);
+  if (!ctx.ok) return error(ctx.message, 403);
+
+  const { tenantId } = ctx.context;
   const res = await handler(user, req, tenantId);
   if (res.status < 400) await logIfMutating(req, user, resource, tenantId);
   return res;
@@ -78,8 +93,15 @@ export async function withAdmin(
     if (!authed) return error("Unauthorized", 401);
     return error("Forbidden", 403);
   }
-  const tenantId = getTenantId(req);
-  if (!tenantId) return error("No tenant context", 403);
+
+  if (!requireTenantAdmin(user)) {
+    return error("Forbidden", 403);
+  }
+
+  const ctx = await requireTenantContext(req, user);
+  if (!ctx.ok) return error(ctx.message, 403);
+
+  const { tenantId } = ctx.context;
   const res = await handler(user, req, tenantId);
   if (res.status < 400) await logIfMutating(req, user, resource, tenantId);
   return res;
@@ -101,7 +123,7 @@ export async function withSuperAdmin(
       tenantId: null,
       action,
       resourceType: "SuperAdmin",
-      ipAddress: req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? undefined,
+      ipAddress: getClientIp(req),
     });
   }
 

@@ -30,6 +30,7 @@ function LoginInner() {
   const [password, setPassword] = React.useState("Admin@123");
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const accountReady = search?.get("message") === "account-ready";
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,7 +42,8 @@ function LoginInner() {
         body: { email, password },
       });
       if (!r.ok) {
-        setError(t("errors.loginFailed"));
+        const j = await r.json().catch(() => ({} as { message?: string; error?: string }));
+        setError(j.error ?? j.message ?? t("errors.loginFailed"));
         return;
       }
       const data = await r.json();
@@ -75,6 +77,12 @@ function LoginInner() {
             </div>
 
             <form onSubmit={onSubmit} className="space-y-4">
+              {accountReady && (
+                <div className="rounded-md bg-success/10 border border-success/20 text-success px-4 py-2 text-sm">
+                  Account setup complete. You can now log in with your email and password.
+                </div>
+              )}
+
               <div className="space-y-1.5">
                 <Label htmlFor="email">{t("auth.email")}</Label>
                 <div className="relative">

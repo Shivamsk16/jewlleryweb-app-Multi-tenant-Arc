@@ -1,5 +1,25 @@
+import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import type { JWTPayload } from "@/lib/auth";
+
+let cachedSystemActorId: string | null | undefined;
+
+/** First super-admin user id for system-initiated audit entries (e.g. unknown login attempts). */
+export async function getSystemActorId(): Promise<string | null> {
+  if (cachedSystemActorId !== undefined) return cachedSystemActorId;
+  const sa = await prisma.user.findFirst({
+    where: { superAdmin: true },
+    select: { id: true },
+    orderBy: { createdAt: "asc" },
+  });
+  cachedSystemActorId = sa?.id ?? null;
+  return cachedSystemActorId;
+}
+
+/** Privacy-safe email fingerprint for audit logs (never store raw email on failed login). */
+export function hashEmailForAudit(email: string): string {
+  return crypto.createHash("sha256").update(email.toLowerCase().trim()).digest("hex").slice(0, 16);
+}
 
 export type LogAction = "CREATE" | "UPDATE" | "DELETE";
 

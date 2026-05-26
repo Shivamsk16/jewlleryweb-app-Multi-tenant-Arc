@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Building2,
+  Mail,
   MoreHorizontal,
   Plus,
   Trash2,
@@ -50,6 +51,7 @@ type TenantRow = {
   status: string;
   plan: string;
   createdAt: string;
+  adminVerified: boolean;
   _count: { members: number };
 };
 
@@ -83,7 +85,6 @@ export default function SuperAdminTenantsPage() {
     plan: "trial",
     adminName: "",
     adminEmail: "",
-    adminPassword: "",
   });
 
   React.useEffect(() => {
@@ -108,7 +109,19 @@ export default function SuperAdminTenantsPage() {
         toast(body.message ?? "Failed", "error");
         return;
       }
-      toast("Tenant created", "success");
+      const body = (await res.json()) as {
+        adminUser?: { email?: string };
+        emailSent?: boolean;
+      };
+      const email = body.adminUser?.email ?? createForm.adminEmail;
+      if (body.emailSent === false) {
+        toast(
+          `Tenant created, but the setup email could not be sent. Use 'Resend Invite' to retry.`,
+          "error",
+        );
+      } else {
+        toast(`Tenant created. A setup email has been sent to ${email}.`, "success");
+      }
       setShowCreate(false);
       setSlugEdited(false);
       setCreateForm({
@@ -117,9 +130,21 @@ export default function SuperAdminTenantsPage() {
         plan: "trial",
         adminName: "",
         adminEmail: "",
-        adminPassword: "",
       });
       await qc.invalidateQueries({ queryKey: ["sa-tenants"] });
+    },
+  });
+
+  const resendInvite = useMutation({
+    mutationFn: (tenantId: string) =>
+      saApiFetch(`/tenants/${tenantId}/resend-invite`, { method: "POST" }),
+    onSuccess: async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({} as { message?: string }));
+        toast(body.message ?? "Failed to resend invite", "error");
+        return;
+      }
+      toast("Setup email resent.", "success");
     },
   });
 
@@ -333,6 +358,15 @@ export default function SuperAdminTenantsPage() {
                           <DropdownMenuItem onClick={() => impersonateTenant.mutate(tenant.id)}>
                             Impersonate
                           </DropdownMenuItem>
+                          {!tenant.adminVerified && (
+                            <DropdownMenuItem
+                              onClick={() => resendInvite.mutate(tenant.id)}
+                              disabled={resendInvite.isPending}
+                            >
+                              <Mail className="size-4" />
+                              Resend Invite
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem
                             onClick={() => {
                               setSelectedTenant(tenant);
@@ -424,16 +458,9 @@ export default function SuperAdminTenantsPage() {
                 onChange={(e) => setCreateForm((p) => ({ ...p, adminEmail: e.target.value }))}
                 required
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Admin Password*</Label>
-              <Input
-                type="password"
-                minLength={8}
-                value={createForm.adminPassword}
-                onChange={(e) => setCreateForm((p) => ({ ...p, adminPassword: e.target.value }))}
-                required
-              />
+              <p className="text-xs text-textMuted">
+                A setup link will be emailed so the admin can choose their own password.
+              </p>
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowCreate(false)}>

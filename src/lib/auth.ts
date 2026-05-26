@@ -141,6 +141,10 @@ export function applyImpersonationCookie(res: NextResponse, token: string) {
 }
 
 export function getTokenFromRequest(req: NextRequest): string | null {
+  const impersonationToken = req.cookies.get(IMPERSONATION_COOKIE_NAME)?.value;
+  if (impersonationToken && verifyImpersonationToken(impersonationToken)) {
+    return impersonationToken;
+  }
   const cookieToken = req.cookies.get(COOKIE_NAME)?.value;
   if (cookieToken) return cookieToken;
   const auth = req.headers.get("authorization");
@@ -161,7 +165,7 @@ export async function getSuperAdminTokenFromCookies(): Promise<string | null> {
 export function requireAuth(req: NextRequest): JWTPayload | null {
   const token = getTokenFromRequest(req);
   if (!token) return null;
-  return verifyToken(token);
+  return verifyToken(token) ?? verifyImpersonationToken(token);
 }
 
 export function requireAdmin(req: NextRequest): JWTPayload | null {

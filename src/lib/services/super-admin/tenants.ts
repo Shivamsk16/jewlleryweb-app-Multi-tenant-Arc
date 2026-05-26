@@ -3,6 +3,17 @@ import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/auth";
 import { parsePagination, toPaginatedResult } from "@/lib/pagination";
 import { writeAuditLog } from "@/lib/activity-log";
+import { sendTenantWelcomeEmail } from "@/lib/email";
+import {
+  buildProvisionSecrets,
+  findLiveTenantBySlug,
+  provisionTenantAdmin,
+  releaseUsersExclusiveToTenant,
+  resolveAdminUserForCreate,
+  seedTenantRoles,
+  slugForDeletedTenant,
+} from "@/lib/services/super-admin/tenant-lifecycle";
+import { generateSecureToken, hashToken, in48Hours } from "@/lib/tokens";
 
 const createTenantSchema = z.object({
   name: z.string().min(2),
@@ -10,7 +21,6 @@ const createTenantSchema = z.object({
   plan: z.string().min(1),
   adminEmail: z.string().email(),
   adminName: z.string().min(1),
-  adminPassword: z.string().min(8),
 });
 
 const updateTenantSchema = z.object({
@@ -53,12 +63,17 @@ export async function listAllTenants(query: Record<string, string | undefined>) 
   }
 
   const { page, limit, skip } = parsePagination(query);
-  const [data, total] = await Promise.all([
+  const [rows, total] = await Promise.all([
     prisma.tenant.findMany({
       where,
       include: {
         _count: { select: { members: true } },
         plan_ref: true,
+        members: {
+          where: { status: "active", role: { name: "admin" } },
+          take: 1,
+          include: { user: { select: { emailVerified: true } } },
+        },
       },
       orderBy: { createdAt: "desc" },
       skip,
@@ -66,6 +81,14 @@ export async function listAllTenants(query: Record<string, string | undefined>) 
     }),
     prisma.tenant.count({ where }),
   ]);
+
+  const data = rows.map((tenant) => {
+    const { members, ...rest } = tenant;
+    return {
+      ...rest,
+      adminVerified: members[0]?.user.emailVerified ?? false,
+    };
+  });
 
   return toPaginatedResult(data, total, page, limit);
 }
@@ -99,16 +122,22 @@ export async function createTenant(body: unknown, actorId?: string) {
   }
   const d = parsed.data;
 
-  const existingSlug = await prisma.tenant.findUnique({ where: { slug: d.slug } });
-  if (existingSlug) return { status: 409 as const, body: { message: "Slug already exists" } };
+  const slugConflict = await findLiveTenantBySlug(d.slug);
+  if (slugConflict) return { status: 409 as const, body: { message: "Slug already exists" } };
 
-  const existingEmail = await prisma.user.findUnique({ where: { email: d.adminEmail } });
-  if (existingEmail) return { status: 409 as const, body: { message: "Admin email already exists" } };
+  const adminResolution = await resolveAdminUserForCreate(d.adminEmail);
+  if (adminResolution.kind === "blocked") {
+    return { status: 409 as const, body: { message: adminResolution.reason } };
+  }
 
   const selectedPlan = await prisma.plan.findFirst({
     where: { name: d.plan, isActive: true },
   });
   if (!selectedPlan) return { status: 400 as const, body: { message: "Plan is not active" } };
+
+  const { placeholderPassword, rawSetupToken, hashedSetupToken } = await buildProvisionSecrets();
+  const reuseUserId =
+    adminResolution.kind === "reuse" ? adminResolution.userId : undefined;
 
   const created = await prisma.$transaction(async (tx) => {
     const tenant = await tx.tenant.create({
@@ -123,81 +152,49 @@ export async function createTenant(body: unknown, actorId?: string) {
       },
     });
 
-    const [adminRole] = await Promise.all([
-      tx.role.create({
-        data: {
-          tenantId: tenant.id,
-          name: "admin",
-          isSystemRole: true,
-          permissions: {
-            can_invite: true,
-            can_edit: true,
-            can_delete: true,
-            can_view_reports: true,
-          },
-        },
-      }),
-      tx.role.create({
-        data: {
-          tenantId: tenant.id,
-          name: "editor",
-          isSystemRole: true,
-          permissions: {
-            can_invite: false,
-            can_edit: true,
-            can_delete: false,
-            can_view_reports: true,
-          },
-        },
-      }),
-      tx.role.create({
-        data: {
-          tenantId: tenant.id,
-          name: "viewer",
-          isSystemRole: true,
-          permissions: {
-            can_invite: false,
-            can_edit: false,
-            can_delete: false,
-            can_view_reports: true,
-          },
-        },
-      }),
-    ]);
+    const adminRole = await seedTenantRoles(tx, tenant.id);
 
-    const adminUser = await tx.user.create({
-      data: {
+    const adminUser = await provisionTenantAdmin(
+      tx,
+      tenant.id,
+      adminRole.id,
+      {
         email: d.adminEmail,
         name: d.adminName,
-        password: await hashPassword(d.adminPassword),
-        role: "ADMIN",
-        emailVerified: true,
+        placeholderPassword,
+        hashedSetupToken,
       },
-    });
-
-    if (adminUser.superAdmin) {
-      throw new Error("Super admin cannot be a tenant member");
-    }
-
-    await tx.tenantMember.create({
-      data: {
-        userId: adminUser.id,
-        tenantId: tenant.id,
-        roleId: adminRole.id,
-        status: "active",
-        joinedAt: new Date(),
-      },
-    });
+      reuseUserId,
+    );
 
     return {
       tenant,
-      adminUser: {
-        id: adminUser.id,
-        email: adminUser.email,
-        name: adminUser.name,
-      },
+      adminUser,
+      reusedExistingUser: Boolean(reuseUserId),
     };
   });
+
+  let emailSent = true;
+  try {
+    await sendTenantWelcomeEmail({
+      to: d.adminEmail,
+      adminName: d.adminName,
+      tenantName: d.name,
+      setupToken: rawSetupToken,
+    });
+    if (actorId) {
+      await writeAuditLog({
+        actorId,
+        tenantId: created.tenant.id,
+        action: "tenant.invite_sent",
+        resourceType: "User",
+        resourceId: created.adminUser.id,
+        afterState: { adminEmail: d.adminEmail },
+      });
+    }
+  } catch {
+    emailSent = false;
+  }
 
   if (actorId) {
     await writeAuditLog({
@@ -206,11 +203,83 @@ export async function createTenant(body: unknown, actorId?: string) {
       action: "tenant.created",
       resourceType: "Tenant",
       resourceId: created.tenant.id,
-      afterState: { slug: created.tenant.slug },
+      afterState: {
+        name: d.name,
+        slug: d.slug,
+        plan: d.plan,
+        adminEmail: d.adminEmail,
+        emailSent,
+        reusedExistingUser: created.reusedExistingUser,
+      },
     });
   }
 
-  return { status: 201 as const, body: created };
+  const { reusedExistingUser, ...createdBody } = created;
+
+  return {
+    status: 201 as const,
+    body: {
+      ...createdBody,
+      emailSent,
+    },
+  };
+}
+
+export async function resendSetupEmail(tenantId: string, actorId?: string) {
+  const adminMember = await prisma.tenantMember.findFirst({
+    where: {
+      tenantId,
+      status: "active",
+      role: { name: "admin" },
+    },
+    include: {
+      user: true,
+      tenant: true,
+    },
+  });
+
+  if (!adminMember) {
+    return { status: 404 as const, body: { message: "Tenant admin not found" } };
+  }
+
+  if (adminMember.user.emailVerified) {
+    return { status: 400 as const, body: { message: "User has already set up their account" } };
+  }
+
+  const rawSetupToken = generateSecureToken();
+  const hashedSetupToken = hashToken(rawSetupToken);
+
+  await prisma.$transaction([
+    prisma.emailVerification.deleteMany({ where: { userId: adminMember.userId } }),
+    prisma.emailVerification.create({
+      data: {
+        userId: adminMember.userId,
+        token: hashedSetupToken,
+        type: "password_setup",
+        expiresAt: in48Hours(),
+      },
+    }),
+  ]);
+
+  await sendTenantWelcomeEmail({
+    to: adminMember.user.email,
+    adminName: adminMember.user.name,
+    tenantName: adminMember.tenant.name,
+    setupToken: rawSetupToken,
+  });
+
+  if (actorId) {
+    await writeAuditLog({
+      actorId,
+      tenantId,
+      action: "tenant.invite_resent",
+      resourceType: "User",
+      resourceId: adminMember.userId,
+      afterState: { adminEmail: adminMember.user.email },
+    });
+  }
+
+  return { status: 200 as const, body: { message: "Setup email resent.", sent: true } };
 }
 
 export async function updateTenant(id: string, body: unknown, actorId?: string) {
@@ -318,12 +387,15 @@ export async function softDeleteTenant(id: string, actorId?: string) {
   if (!tenant) return { status: 404 as const, body: { message: "Tenant not found" } };
   if (tenant.deletedAt) return { status: 400 as const, body: { message: "Tenant already deleted" } };
 
+  const freedSlug = slugForDeletedTenant(tenant.slug, tenant.id);
+
   await prisma.$transaction([
     prisma.tenant.update({
       where: { id },
       data: {
         deletedAt: new Date(),
         status: "deleted",
+        slug: freedSlug,
       },
     }),
     prisma.tenantMember.updateMany({
@@ -332,6 +404,8 @@ export async function softDeleteTenant(id: string, actorId?: string) {
     }),
   ]);
 
+  const releasedUserIds = await releaseUsersExclusiveToTenant(id);
+
   if (actorId) {
     await writeAuditLog({
       actorId,
@@ -339,6 +413,11 @@ export async function softDeleteTenant(id: string, actorId?: string) {
       action: "tenant.deleted",
       resourceType: "Tenant",
       resourceId: id,
+      afterState: {
+        previousSlug: tenant.slug,
+        freedSlug,
+        releasedUserIds,
+      },
     });
   }
 

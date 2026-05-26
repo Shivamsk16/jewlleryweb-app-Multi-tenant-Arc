@@ -184,6 +184,23 @@ model User {
   auditLogs     AuditLog[]     @relation("AuditActor")
   superAdminSessions ImpersonationSession[] @relation("SuperAdminSessions")
   impersonatedSessions ImpersonationSession[] @relation("ImpersonatedSessions")
+  emailVerification  EmailVerification?
+}
+
+model EmailVerification {
+  id        String    @id @default(uuid())
+  userId    String    @unique
+  token     String    @unique
+  type      String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 // ============================================================

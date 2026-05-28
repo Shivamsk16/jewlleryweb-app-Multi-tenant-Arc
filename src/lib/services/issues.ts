@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { detectOverdue, getAvailableStock } from "@/lib/business";
 import { parsePagination, toPaginatedResult } from "@/lib/pagination";
 import { scopedWhere } from "@/lib/tenant-scope";
-import { supabase } from "@/lib/supabase";
+import { uploadToIssuesBucket } from "@/lib/supabase-storage";
 
 function issueDateRangeFromSearch(search: string): { gte: Date; lte: Date } | null {
   const parsed = new Date(search);
@@ -209,27 +209,20 @@ export async function uploadIssueFile(_tenantId: string, body: unknown) {
   const contentType = allowed.includes(normalizedType) ? normalizedType : "image/jpeg";
   const dataUrl = `data:${contentType};base64,${fileData}`;
 
-  if (supabase) {
-    const bucket =
-      process.env.SUPABASE_STORAGE_ISSUES_BUCKET?.trim() || "issues";
-    const { data, error } = await supabase.storage.from(bucket).upload(path, buffer, {
-      contentType,
-      upsert: false,
-    });
-    if (error) {
-      const msg = error.message ?? "";
-      const bucketMissing =
-        /bucket not found/i.test(msg) ||
-        (/not found/i.test(msg) && /bucket|storage/i.test(msg));
-      if (bucketMissing) {
-        return { status: 200 as const, body: { fileUrl: dataUrl } };
-      }
-      return { status: 500 as const, body: { message: error.message } };
-    }
-    const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(data.path);
-    return { status: 200 as const, body: { fileUrl: urlData.publicUrl } };
+  const upload = await uploadToIssuesBucket(path, buffer, contentType);
+  if (upload.ok) {
+    return { status: 200 as const, body: { fileUrl: upload.publicUrl } };
   }
-  return { status: 200 as const, body: { fileUrl: dataUrl } };
+
+  if (upload.recoverable) {
+    console.warn(
+      "[issues/upload] Supabase storage unavailable; using inline image. Check SUPABASE_SERVICE_ROLE_KEY (service_role, not anon) and the public `issues` bucket.",
+      upload.error,
+    );
+    return { status: 200 as const, body: { fileUrl: dataUrl } };
+  }
+
+  return { status: 500 as const, body: { message: "File upload failed" } };
 }
 
 export async function listOverdueIssues(tenantId: string, user?: JWTPayload) {

@@ -13,6 +13,8 @@ export function shouldSkipEmail(): boolean {
 }
 
 export function logSkippedEmail(label: string, details: Record<string, string>): void {
+  if (process.env.NODE_ENV === "production") return;
+
   console.log(`[Email DEV] ${label}`);
   for (const [key, value] of Object.entries(details)) {
     console.log(`[Email DEV] ${key}:`, value);

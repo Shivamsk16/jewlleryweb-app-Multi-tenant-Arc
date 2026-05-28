@@ -1,4 +1,4 @@
-import { getAppBaseUrl } from "./app-url";
+import { appUrl, getAppBaseUrl } from "./app-url";
 import { sendEmail } from "./transport";
 import {
   passwordResetHtml,
@@ -9,7 +9,7 @@ import {
   tenantWelcomePlainText,
 } from "./templates/tenant-welcome";
 
-export { getAppBaseUrl } from "./app-url";
+export { appUrl, getAppBaseUrl } from "./app-url";
 export { PASSWORD_RESET_EXPIRY_MINUTES } from "./templates/password-reset";
 
 type PasswordResetParams = {
@@ -26,19 +26,23 @@ type TenantWelcomeParams = {
 };
 
 export async function sendPasswordResetEmail(params: PasswordResetParams): Promise<void> {
-  const resetUrl = `${getAppBaseUrl()}/reset-password?token=${encodeURIComponent(params.resetToken)}`;
+  const resetUrl = appUrl(
+    `/reset-password?token=${encodeURIComponent(params.resetToken)}`,
+  );
 
   await sendEmail({
     to: params.to,
     subject: "Reset your JewelFlow password",
     html: passwordResetHtml({ name: params.name, resetUrl }),
     text: passwordResetPlainText({ name: params.name, resetUrl }),
-    devLog: { resetUrl },
+    devLog: { path: "/reset-password", baseUrl: getAppBaseUrl() },
   });
 }
 
 export async function sendTenantWelcomeEmail(params: TenantWelcomeParams): Promise<void> {
-  const setupUrl = `${getAppBaseUrl()}/setup-account?token=${encodeURIComponent(params.setupToken)}`;
+  const setupUrl = appUrl(
+    `/setup-account?token=${encodeURIComponent(params.setupToken)}`,
+  );
 
   await sendEmail({
     to: params.to,
@@ -53,6 +57,6 @@ export async function sendTenantWelcomeEmail(params: TenantWelcomeParams): Promi
       tenantName: params.tenantName,
       setupUrl,
     }),
-    devLog: { setupUrl },
+    devLog: { path: "/setup-account", baseUrl: getAppBaseUrl() },
   });
 }

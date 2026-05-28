@@ -15,7 +15,8 @@ import {
   writeAuditLog,
 } from "@/lib/activity-log";
 import { resolveTenantRoleId, validateTenantForLogin } from "@/lib/tenant-scope";
-import { hashToken } from "@/lib/tokens";
+import { generateSecureToken, hashToken, in1Hour } from "@/lib/tokens";
+import { sendPasswordResetEmail } from "@/lib/email";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -39,6 +40,19 @@ const setupPasswordSchema = z.object({
   password: z.string().min(8),
   confirmPassword: z.string().min(8),
 });
+
+const forgotPasswordSchema = z.object({
+  email: z.string().email(),
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string().min(1),
+  password: z.string().min(8),
+  confirmPassword: z.string().min(8),
+});
+
+const PASSWORD_RESET_GENERIC =
+  "If an account exists for this email, you will receive a password reset link shortly.";
 
 type SessionUser = {
   id: string;
@@ -117,6 +131,23 @@ function toSessionUser(payload: JWTPayload): SessionUser {
     tenantSlug: payload.tenantSlug,
     memberRole: payload.memberRole,
   };
+}
+
+async function findPasswordResetByRawToken(rawToken: string) {
+  const hashed = hashToken(rawToken);
+  return prisma.emailVerification.findFirst({
+    where: { token: hashed, type: "password_reset", usedAt: null },
+    include: {
+      user: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          superAdmin: true,
+        },
+      },
+    },
+  });
 }
 
 async function findVerificationByRawToken(rawToken: string) {
@@ -461,6 +492,112 @@ export async function setupPassword(body: unknown, meta?: AuthMeta) {
   return {
     status: 200 as const,
     body: { message: "Account setup complete. You can now log in." },
+  };
+}
+
+export async function requestPasswordReset(body: unknown) {
+  const parsed = forgotPasswordSchema.safeParse(body);
+  if (!parsed.success) {
+    return { status: 400 as const, body: { message: "Invalid input" } };
+  }
+
+  const email = parsed.data.email.toLowerCase().trim();
+  const user = await prisma.user.findUnique({ where: { email } });
+
+  if (user) {
+    const canReset =
+      user.superAdmin === true ||
+      (await prisma.tenantMember.findFirst({
+        where: { userId: user.id, status: "active" },
+      })) !== null;
+
+    if (canReset) {
+      const rawToken = generateSecureToken();
+      const hashedToken = hashToken(rawToken);
+
+      await prisma.emailVerification.deleteMany({ where: { userId: user.id } });
+      await prisma.emailVerification.create({
+        data: {
+          userId: user.id,
+          token: hashedToken,
+          type: "password_reset",
+          expiresAt: in1Hour(),
+        },
+      });
+
+      try {
+        await sendPasswordResetEmail({
+          to: user.email,
+          name: user.name,
+          resetToken: rawToken,
+        });
+      } catch (err) {
+        console.error("[Auth] Failed to send password reset email:", err);
+      }
+    }
+  }
+
+  return {
+    status: 200 as const,
+    body: { message: PASSWORD_RESET_GENERIC },
+  };
+}
+
+export async function resetPassword(body: unknown, meta?: AuthMeta) {
+  const parsed = resetPasswordSchema.safeParse(body);
+  if (!parsed.success) {
+    return { status: 400 as const, body: { message: "Invalid input" } };
+  }
+
+  if (parsed.data.password !== parsed.data.confirmPassword) {
+    return { status: 400 as const, body: { message: "Passwords do not match" } };
+  }
+
+  const record = await findPasswordResetByRawToken(parsed.data.token);
+
+  if (!record) {
+    return { status: 404 as const, body: { message: "Invalid or expired reset link" } };
+  }
+
+  if (record.expiresAt < new Date()) {
+    return {
+      status: 410 as const,
+      body: { message: "This reset link has expired. Please request a new one." },
+    };
+  }
+
+  const hashedPassword = await hashPassword(parsed.data.password);
+  const tenantId =
+    (
+      await prisma.tenantMember.findFirst({
+        where: { userId: record.userId, status: "active" },
+        select: { tenantId: true },
+      })
+    )?.tenantId ?? null;
+
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: record.userId },
+      data: { password: hashedPassword, emailVerified: true },
+    }),
+    prisma.emailVerification.update({
+      where: { id: record.id },
+      data: { usedAt: new Date() },
+    }),
+  ]);
+
+  await writeAuditLog({
+    actorId: record.userId,
+    tenantId,
+    action: "auth.password_reset_completed",
+    resourceType: "User",
+    resourceId: record.userId,
+    ipAddress: meta?.ipAddress,
+  });
+
+  return {
+    status: 200 as const,
+    body: { message: "Password updated. You can now sign in." },
   };
 }
 

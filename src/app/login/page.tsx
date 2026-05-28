@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslation } from "react-i18next";
 import { Mail, Lock, Gem } from "lucide-react";
@@ -9,7 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { LanguageToggle } from "@/components/language-toggle";
 import { apiFetch } from "@/lib/api";
-import { useAuthStore } from "@/store/auth-store";
+import { useAuthStore, type User } from "@/store/auth-store";
+import { useSuperAdminStore } from "@/store/super-admin-store";
 
 export const dynamic = "force-dynamic";
 
@@ -26,11 +28,13 @@ function LoginInner() {
   const search = useSearchParams();
   const { t } = useTranslation();
   const setSession = useAuthStore((s) => s.setSession);
+  const setSaSession = useSuperAdminStore((s) => s.setSession);
   const [email, setEmail] = React.useState("admin@jewelflow.in");
   const [password, setPassword] = React.useState("Admin@123");
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const accountReady = search?.get("message") === "account-ready";
+  const accountReady =
+    search?.get("message") === "account-ready" || search?.get("message") === "password-reset";
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,9 +50,28 @@ function LoginInner() {
         setError(j.error ?? j.message ?? t("errors.loginFailed"));
         return;
       }
-      const data = await r.json();
-      setSession(data.user, data.token);
-      router.push(search?.get("redirect") || "/dashboard");
+      const data = (await r.json()) as {
+        user: { id: string; email: string; name: string; superAdmin?: boolean };
+        token?: string;
+        isSuperAdmin?: boolean;
+      };
+      const redirect = search?.get("redirect");
+      if (data.isSuperAdmin && data.user) {
+        setSaSession(
+          {
+            id: data.user.id,
+            email: data.user.email,
+            name: data.user.name,
+            superAdmin: true,
+          },
+          data.token ?? "sa-cookie-session",
+        );
+        router.push(redirect || "/super-admin/dashboard");
+      } else if (data.user && data.token) {
+        setSession(data.user as User, data.token);
+        router.push(redirect || "/dashboard");
+      }
+      router.refresh();
     } finally {
       setLoading(false);
     }
@@ -79,7 +102,9 @@ function LoginInner() {
             <form onSubmit={onSubmit} className="space-y-4">
               {accountReady && (
                 <div className="rounded-md bg-success/10 border border-success/20 text-success px-4 py-2 text-sm">
-                  Account setup complete. You can now log in with your email and password.
+                  {search?.get("message") === "password-reset"
+                    ? t("auth.passwordResetSuccess")
+                    : "Account setup complete. You can now log in with your email and password."}
                 </div>
               )}
 
@@ -99,7 +124,15 @@ function LoginInner() {
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="password">{t("auth.password")}</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="password">{t("auth.password")}</Label>
+                  <Link
+                    href="/forgot-password"
+                    className="text-xs text-brand-primary hover:underline"
+                  >
+                    {t("auth.forgotPassword")}
+                  </Link>
+                </div>
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-textMuted" />
                   <Input

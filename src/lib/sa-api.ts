@@ -42,8 +42,9 @@ export async function saApi<T = unknown>(path: string, options: SaApiOptions = {
     if (res.status === 401 || res.status === 403) {
       if (typeof window !== "undefined") {
         useSuperAdminStore.getState().clear();
-        if (!window.location.pathname.startsWith("/super-admin/login")) {
-          window.location.href = "/super-admin/login";
+        if (!window.location.pathname.startsWith("/login")) {
+          const redirect = encodeURIComponent(window.location.pathname);
+          window.location.href = `/login?redirect=${redirect}`;
         }
       }
     }

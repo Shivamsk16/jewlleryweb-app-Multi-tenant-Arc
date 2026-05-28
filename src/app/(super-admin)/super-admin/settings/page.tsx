@@ -36,7 +36,7 @@ export default function SuperAdminSettingsPage() {
   const logout = async () => {
     await saApiFetch("/auth/logout", { method: "POST" });
     clear();
-    router.push("/super-admin/login");
+    router.push("/login");
     router.refresh();
   };
 

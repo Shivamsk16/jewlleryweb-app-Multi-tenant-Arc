@@ -44,7 +44,7 @@ export function SaHeader() {
   const onLogout = async () => {
     await saApiFetch("/auth/logout", { method: "POST" });
     clear();
-    router.push("/super-admin/login");
+    router.push("/login");
     router.refresh();
   };
 

@@ -27,6 +27,8 @@ const limiters = {
   setupPassword: () => createLimiter(5, "15 m"),
   verifyToken: () => createLimiter(30, "15 m"),
   resendInvite: () => createLimiter(3, "1 h"),
+  forgotPassword: () => createLimiter(5, "15 m"),
+  resetPassword: () => createLimiter(5, "15 m"),
 };
 
 async function check(limiter: Ratelimit | null, key: string): Promise<LimitResult> {

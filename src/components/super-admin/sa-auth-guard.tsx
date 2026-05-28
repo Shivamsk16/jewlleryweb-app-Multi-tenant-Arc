@@ -17,11 +17,10 @@ export function SaAuthGuard({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     if (!hydrated) return;
-    if (pathname?.startsWith("/super-admin/login")) return;
     const token = getStoredSaToken();
     if (!admin || !token) {
       const redirect = encodeURIComponent(pathname || "/super-admin/dashboard");
-      router.replace(`/super-admin/login?redirect=${redirect}`);
+      router.replace(`/login?redirect=${redirect}`);
     }
   }, [hydrated, admin, pathname, router]);
 
@@ -31,10 +30,6 @@ export function SaAuthGuard({ children }: { children: React.ReactNode }) {
         Loading…
       </div>
     );
-  }
-
-  if (pathname?.startsWith("/super-admin/login")) {
-    return <>{children}</>;
   }
 
   if (!admin || !getStoredSaToken()) {

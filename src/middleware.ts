@@ -74,20 +74,29 @@ export function middleware(req: NextRequest) {
     }
   }
 
-  const isSuperAdminRoute =
-    SA_PROTECTED_PREFIXES.some((p) => pathname.startsWith(p)) &&
-    pathname !== "/super-admin/login";
+  if (pathname === "/super-admin/login") {
+    const url = req.nextUrl.clone();
+    url.pathname = "/login";
+    if (req.nextUrl.searchParams.get("redirect")) {
+      url.search = req.nextUrl.search;
+    }
+    return NextResponse.redirect(url);
+  }
+
+  const isSuperAdminRoute = SA_PROTECTED_PREFIXES.some((p) => pathname.startsWith(p));
   if (isSuperAdminRoute) {
     const saToken = req.cookies.get(SA_COOKIE_NAME)?.value;
     if (!saToken) {
       const url = req.nextUrl.clone();
-      url.pathname = "/super-admin/login";
+      url.pathname = "/login";
+      url.searchParams.set("redirect", pathname);
       return NextResponse.redirect(url);
     }
     const payload = decodeJwtPayload(saToken);
     if (!payload?.isSuperAdminSession) {
       const url = req.nextUrl.clone();
-      url.pathname = "/super-admin/login";
+      url.pathname = "/login";
+      url.searchParams.set("redirect", pathname);
       return NextResponse.redirect(url);
     }
     return NextResponse.next();

@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/auth";
-import { generateSecureToken, hashToken, in48Hours } from "@/lib/tokens";
+import { generateSecureToken, hashToken } from "@/lib/tokens";
 
 /** Frees a unique slug by renaming a soft-deleted tenant's slug. */
 export function slugForDeletedTenant(originalSlug: string, tenantId: string): string {
@@ -130,8 +130,7 @@ export async function seedTenantRoles(tx: Tx, tenantId: string) {
 export type ProvisionAdminInput = {
   email: string;
   name: string;
-  placeholderPassword: string;
-  hashedSetupToken: string;
+  hashedPassword: string;
 };
 
 export async function provisionTenantAdmin(
@@ -147,9 +146,9 @@ export async function provisionTenantAdmin(
         data: {
           name: input.name,
           email: input.email,
-          password: input.placeholderPassword,
+          password: input.hashedPassword,
           role: "ADMIN",
-          emailVerified: false,
+          emailVerified: true,
           superAdmin: false,
         },
         select: { id: true, email: true, name: true },
@@ -158,9 +157,9 @@ export async function provisionTenantAdmin(
         data: {
           email: input.email,
           name: input.name,
-          password: input.placeholderPassword,
+          password: input.hashedPassword,
           role: "ADMIN",
-          emailVerified: false,
+          emailVerified: true,
           superAdmin: false,
         },
         select: { id: true, email: true, name: true },
@@ -175,15 +174,6 @@ export async function provisionTenantAdmin(
       roleId: adminRoleId,
       status: "active",
       joinedAt: new Date(),
-    },
-  });
-
-  await tx.emailVerification.create({
-    data: {
-      userId: adminUser.id,
-      token: input.hashedSetupToken,
-      type: "password_setup",
-      expiresAt: in48Hours(),
     },
   });
 

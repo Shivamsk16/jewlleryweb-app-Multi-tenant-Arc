@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { applyAuthCookie } from "@/lib/auth";
+import { applyAuthCookie, applySupAdminCookie } from "@/lib/auth";
 import { error, getClientIp, json, parseJson } from "@/lib/api-helpers";
 import { rateLimit } from "@/lib/rate-limit";
 import * as authService from "@/lib/services/auth";
@@ -22,8 +22,16 @@ export async function POST(req: NextRequest) {
   const result = await authService.login(body, { ipAddress: getClientIp(req) });
   const res = json(result.body, result.status);
   if (result.status === 200) {
-    const payload = result.body as { token: string };
-    applyAuthCookie(res, payload.token);
+    const payload = result.body as {
+      token?: string;
+      isSuperAdmin?: boolean;
+      user?: unknown;
+    };
+    if (payload.isSuperAdmin && payload.token) {
+      applySupAdminCookie(res, payload.token);
+    } else if (payload.token) {
+      applyAuthCookie(res, payload.token);
+    }
   }
   return res;
 }

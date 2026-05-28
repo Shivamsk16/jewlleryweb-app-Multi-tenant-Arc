@@ -41,7 +41,10 @@ import {
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { formatDateTime } from "@/lib/utils";
+import { applyImpersonationSession } from "@/lib/impersonation-client";
+import type { ImpersonationStartBody } from "@/lib/services/super-admin/impersonate";
 import { saApi, saApiFetch } from "@/lib/sa-api";
+import { canActivateTenant, canSuspendTenant } from "@/lib/tenant-status-actions";
 
 type TenantRow = {
   id: string;
@@ -171,12 +174,13 @@ export default function SuperAdminTenantsPage() {
     mutationFn: async (tenantId: string) => {
       const res = await saApiFetch(`/tenants/${tenantId}/impersonate`, { method: "POST" });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? "Impersonation failed");
-      return (await res.json()) as { token: string; expiresAt: string };
+      return (await res.json()) as ImpersonationStartBody;
     },
-    onSuccess: ({ token }) => {
-      localStorage.setItem("impersonation_token", token);
+    onSuccess: (data) => {
+      applyImpersonationSession(data);
       toast("Impersonation started", "success");
       router.push("/dashboard");
+      router.refresh();
     },
     onError: (err: unknown) => {
       toast(err instanceof Error ? err.message : "Impersonation failed", "error");
@@ -320,17 +324,21 @@ export default function SuperAdminTenantsPage() {
                           <DropdownMenuItem onClick={() => router.push(`/super-admin/tenants/${tenant.id}`)}>
                             View Details
                           </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => {
-                              setSelectedTenant(tenant);
-                              setShowSuspend(true);
-                            }}
-                          >
-                            Suspend
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => activateTenant.mutate(tenant.id)}>
-                            Activate
-                          </DropdownMenuItem>
+                          {canSuspendTenant(tenant.status) ? (
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setSelectedTenant(tenant);
+                                setShowSuspend(true);
+                              }}
+                            >
+                              Suspend
+                            </DropdownMenuItem>
+                          ) : null}
+                          {canActivateTenant(tenant.status) ? (
+                            <DropdownMenuItem onClick={() => activateTenant.mutate(tenant.id)}>
+                              Activate
+                            </DropdownMenuItem>
+                          ) : null}
                           <DropdownMenuItem onClick={() => impersonateTenant.mutate(tenant.id)}>
                             Impersonate
                           </DropdownMenuItem>

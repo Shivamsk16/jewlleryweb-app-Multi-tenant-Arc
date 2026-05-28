@@ -32,6 +32,43 @@ function ResetPasswordInner() {
   const [confirmPassword, setConfirmPassword] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [checkingToken, setCheckingToken] = React.useState(!!token);
+  const [tokenExpired, setTokenExpired] = React.useState(false);
+  const [tokenInvalid, setTokenInvalid] = React.useState(!token);
+
+  React.useEffect(() => {
+    if (!token) {
+      setTokenInvalid(true);
+      setCheckingToken(false);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch(
+          `/api/auth/verify-reset-token?token=${encodeURIComponent(token)}`,
+        );
+        const body = await res.json().catch(() => ({} as { message?: string }));
+        if (cancelled) return;
+
+        if (res.status === 410) {
+          setTokenExpired(true);
+          setTokenInvalid(false);
+        } else if (!res.ok) {
+          setTokenInvalid(true);
+        }
+      } catch {
+        if (!cancelled) setTokenInvalid(true);
+      } finally {
+        if (!cancelled) setCheckingToken(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,6 +101,8 @@ function ResetPasswordInner() {
     }
   };
 
+  const showInvalidState = tokenInvalid || tokenExpired;
+
   return (
     <div className="min-h-screen flex items-center justify-center px-4 bg-gradient-to-br from-brand-primaryLight via-background to-brand-secondaryLight">
       <div className="absolute top-4 right-4">
@@ -83,10 +122,17 @@ function ResetPasswordInner() {
             <h2 className="text-xl font-semibold text-textPrimary">{t("auth.resetPasswordTitle")}</h2>
             <p className="text-xs text-textSecondary mt-1 mb-6">{t("auth.resetPasswordSubtitle")}</p>
 
-            {!token ? (
+            {checkingToken ? (
+              <div className="py-8 text-center text-sm text-textMuted">{t("common.loading")}</div>
+            ) : showInvalidState ? (
               <div className="space-y-4">
                 <div className="rounded-md bg-danger/10 border border-danger/30 px-3 py-2 text-xs text-danger">
-                  {t("auth.invalidResetLink")}
+                  {tokenExpired
+                    ? t("auth.resetLinkExpired", {
+                        defaultValue:
+                          "This reset link has expired. Please request a new one.",
+                      })
+                    : t("auth.invalidResetLink")}
                 </div>
                 <Link href="/forgot-password" className="text-sm text-brand-primary hover:underline block text-center">
                   {t("auth.forgotPassword")}

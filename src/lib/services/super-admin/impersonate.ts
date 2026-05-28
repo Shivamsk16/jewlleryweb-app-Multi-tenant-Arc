@@ -1,6 +1,27 @@
 import { prisma } from "@/lib/prisma";
-import { signImpersonationToken, type JWTPayload } from "@/lib/auth";
+import {
+  IMPERSONATION_MAX_AGE_SEC,
+  signImpersonationToken,
+  type JWTPayload,
+} from "@/lib/auth";
 import { writeAuditLog } from "@/lib/activity-log";
+
+export type ImpersonationStartBody = {
+  token: string;
+  expiresAt: string;
+  user: {
+    id: string;
+    email: string;
+    name: string;
+    role: "ADMIN" | "USER";
+    tenantId: string;
+    tenantSlug: string;
+    memberRole: string;
+  };
+  tenantName: string;
+  impersonatedBy: string;
+  isImpersonating: true;
+};
 
 export async function startImpersonation(
   superAdminId: string,
@@ -27,6 +48,10 @@ export async function startImpersonation(
   });
   if (!tenantAdmin) return { status: 404 as const, body: { message: "Tenant admin not found" } };
 
+  if (tenantAdmin.user.superAdmin) {
+    return { status: 400 as const, body: { message: "Cannot impersonate super admin accounts" } };
+  }
+
   const payload: JWTPayload = {
     id: tenantAdmin.user.id,
     email: tenantAdmin.user.email,
@@ -40,7 +65,7 @@ export async function startImpersonation(
   };
 
   const token = signImpersonationToken(payload);
-  const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+  const expiresAt = new Date(Date.now() + IMPERSONATION_MAX_AGE_SEC * 1000);
 
   await prisma.impersonationSession.create({
     data: {
@@ -58,11 +83,32 @@ export async function startImpersonation(
     tenantId: null,
     action: "tenant.impersonation_started",
     resourceType: "ImpersonationSession",
-    afterState: { targetTenantId, impersonatedUserId: tenantAdmin.userId },
+    afterState: {
+      targetTenantId,
+      tenantName: tenant.name,
+      impersonatedUserId: tenantAdmin.userId,
+    },
     ipAddress,
   });
 
-  return { status: 200 as const, body: { token, expiresAt } };
+  const body: ImpersonationStartBody = {
+    token,
+    expiresAt: expiresAt.toISOString(),
+    user: {
+      id: payload.id,
+      email: payload.email,
+      name: payload.name,
+      role: payload.role,
+      tenantId: payload.tenantId,
+      tenantSlug: payload.tenantSlug,
+      memberRole: payload.memberRole,
+    },
+    tenantName: tenant.name,
+    impersonatedBy: superAdminId,
+    isImpersonating: true,
+  };
+
+  return { status: 200 as const, body };
 }
 
 export async function endImpersonation(sessionToken: string, actorId: string) {
@@ -82,6 +128,7 @@ export async function endImpersonation(sessionToken: string, actorId: string) {
     action: "tenant.impersonation_ended",
     resourceType: "ImpersonationSession",
     resourceId: session.id,
+    afterState: { targetTenantId: session.targetTenantId },
   });
 
   return { status: 200 as const, body: { ok: true } };

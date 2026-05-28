@@ -13,7 +13,7 @@ export default function Home() {
     let cancelled = false;
     (async () => {
       try {
-        const data = await api<{ user: any }>("/api/auth/me");
+        const data = await api<{ user: unknown }>("/api/auth/me");
         if (cancelled) return;
         router.replace(data?.user ? "/dashboard" : "/login");
       } catch {

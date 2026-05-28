@@ -105,7 +105,8 @@ export function middleware(req: NextRequest) {
   const isProtected = PROTECTED_PREFIXES.some((p) => pathname.startsWith(p));
   if (!isProtected) return NextResponse.next();
 
-  const token = req.cookies.get(COOKIE_NAME)?.value;
+  const token =
+    req.cookies.get(IMPERSONATION_COOKIE_NAME)?.value ?? req.cookies.get(COOKIE_NAME)?.value;
   if (!token) {
     const url = req.nextUrl.clone();
     url.pathname = "/login";

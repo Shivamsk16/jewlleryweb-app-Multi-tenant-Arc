@@ -6,6 +6,8 @@ import type { NextRequest, NextResponse } from "next/server";
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
 const SA_IMPERSONATION_SECRET = process.env.SA_IMPERSONATION_SECRET || "dev-sa-impersonation-secret";
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "30m";
+export const IMPERSONATION_EXPIRES_IN = process.env.IMPERSONATION_EXPIRES_IN || "30m";
+export const IMPERSONATION_MAX_AGE_SEC = 60 * 30;
 export const COOKIE_NAME = "jewelflow_token";
 export const SA_COOKIE_NAME = "jewelflow_sa_token";
 export const IMPERSONATION_COOKIE_NAME = "jewelflow_impersonation_token";
@@ -64,7 +66,9 @@ export function signSuperAdminToken(payload: SuperAdminJWTPayload): string {
 }
 
 export function signImpersonationToken(payload: JWTPayload): string {
-  return jwt.sign(payload, SA_IMPERSONATION_SECRET, { expiresIn: "30m" } as jwt.SignOptions);
+  return jwt.sign(payload, SA_IMPERSONATION_SECRET, {
+    expiresIn: IMPERSONATION_EXPIRES_IN,
+  } as jwt.SignOptions);
 }
 
 export function verifyToken(token: string): JWTPayload | null {
@@ -81,6 +85,15 @@ export function verifyImpersonationToken(token: string): JWTPayload | null {
   } catch {
     return null;
   }
+}
+
+/** Resolve tenant session from either normal or impersonation JWT. */
+export function verifySessionToken(token: string): JWTPayload | null {
+  return verifyImpersonationToken(token) ?? verifyToken(token);
+}
+
+export function isImpersonationPayload(payload: JWTPayload): boolean {
+  return typeof payload.impersonatedBy === "string" && payload.impersonatedBy.length > 0;
 }
 
 const isProd = process.env.NODE_ENV === "production";
@@ -135,7 +148,18 @@ export function applyImpersonationCookie(res: NextResponse, token: string) {
     sameSite: isProd ? "none" : "lax",
     secure: isProd,
     path: "/",
-    maxAge: 60 * 30,
+    maxAge: IMPERSONATION_MAX_AGE_SEC,
+  });
+  return res;
+}
+
+export function clearImpersonationCookie(res: NextResponse) {
+  res.cookies.set(IMPERSONATION_COOKIE_NAME, "", {
+    httpOnly: true,
+    sameSite: isProd ? "none" : "lax",
+    secure: isProd,
+    path: "/",
+    maxAge: 0,
   });
   return res;
 }
@@ -154,6 +178,10 @@ export function getTokenFromRequest(req: NextRequest): string | null {
 
 export async function getTokenFromCookies(): Promise<string | null> {
   const store = await cookies();
+  const impersonation = store.get(IMPERSONATION_COOKIE_NAME)?.value;
+  if (impersonation && verifyImpersonationToken(impersonation)) {
+    return impersonation;
+  }
   return store.get(COOKIE_NAME)?.value ?? null;
 }
 
@@ -165,7 +193,7 @@ export async function getSuperAdminTokenFromCookies(): Promise<string | null> {
 export function requireAuth(req: NextRequest): JWTPayload | null {
   const token = getTokenFromRequest(req);
   if (!token) return null;
-  return verifyToken(token) ?? verifyImpersonationToken(token);
+  return verifySessionToken(token);
 }
 
 export function requireAdmin(req: NextRequest): JWTPayload | null {

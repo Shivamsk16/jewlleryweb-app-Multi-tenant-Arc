@@ -29,8 +29,8 @@ function LoginInner() {
   const { t } = useTranslation();
   const setSession = useAuthStore((s) => s.setSession);
   const setSaSession = useSuperAdminStore((s) => s.setSession);
-  const [email, setEmail] = React.useState("admin@jewelflow.in");
-  const [password, setPassword] = React.useState("Admin@123");
+  const [email, setEmail] = React.useState("");
+  const [password, setPassword] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const accountReady =

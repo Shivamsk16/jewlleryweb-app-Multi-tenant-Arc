@@ -10,7 +10,14 @@ export async function POST(req: NextRequest) {
     return error("Too many attempts. Please try again later.", 429);
   }
 
-  const body = await parseJson(req);
+  const body = await parseJson<{ token?: string }>(req);
+  const tokenKey =
+    typeof body.token === "string" ? body.token.slice(0, 16) : "unknown";
+  const tokenLimit = await rateLimit("resetPassword", `token:${tokenKey}`);
+  if (!tokenLimit.success) {
+    return error("Too many attempts. Please try again later.", 429);
+  }
+
   const result = await authService.resetPassword(body, { ipAddress: getClientIp(req) });
   return json(result.body, result.status);
 }

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { useAuthStore, getStoredToken } from "@/store/auth-store";
+import { useAuthStore } from "@/store/auth-store";
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -12,13 +12,12 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   const hydrate = useAuthStore((s) => s.hydrate);
 
   React.useEffect(() => {
-    hydrate();
+    void hydrate();
   }, [hydrate]);
 
   React.useEffect(() => {
     if (!hydrated) return;
-    const token = getStoredToken();
-    if (!user || !token) {
+    if (!user) {
       const redirect = encodeURIComponent(pathname || "/dashboard");
       router.replace(`/login?redirect=${redirect}`);
     }
@@ -32,7 +31,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!user || !getStoredToken()) {
+  if (!user) {
     return (
       <div className="flex min-h-[40vh] items-center justify-center text-textMuted text-sm">
         Redirecting to sign in…

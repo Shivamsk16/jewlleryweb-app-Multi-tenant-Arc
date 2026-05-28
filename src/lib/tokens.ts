@@ -21,3 +21,9 @@ export function in24Hours(): Date {
 export function in1Hour(): Date {
   return new Date(Date.now() + 60 * 60 * 1000);
 }
+
+export function in30Minutes(): Date {
+  const minutes = Number(process.env.PASSWORD_RESET_TTL_MINUTES ?? "30");
+  const clamped = Math.min(30, Math.max(15, minutes));
+  return new Date(Date.now() + clamped * 60 * 1000);
+}

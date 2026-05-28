@@ -5,6 +5,5 @@ import * as authService from "@/lib/services/auth";
 
 export async function GET(req: NextRequest) {
   const token = getTokenFromRequest(req);
-  const data = await authService.me(token);
-  return json(data);
+  return json(await authService.me(token));
 }

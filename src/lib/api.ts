@@ -45,8 +45,11 @@ export async function api<T = unknown>(
     }
 
     if (res.status === 401 && typeof window !== "undefined") {
+      const wasImpersonating = useAuthStore.getState().impersonation.isImpersonating;
       useAuthStore.getState().clear();
-      if (!window.location.pathname.startsWith("/login")) {
+      if (wasImpersonating) {
+        window.location.href = "/super-admin/tenants";
+      } else if (!window.location.pathname.startsWith("/login")) {
         const redirect = encodeURIComponent(window.location.pathname);
         window.location.href = `/login?redirect=${redirect}`;
       }

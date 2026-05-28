@@ -28,7 +28,10 @@ import { StatCard } from "@/components/stat-card";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { formatDateTime } from "@/lib/utils";
+import { applyImpersonationSession } from "@/lib/impersonation-client";
+import type { ImpersonationStartBody } from "@/lib/services/super-admin/impersonate";
 import { saApi, saApiFetch } from "@/lib/sa-api";
+import { canActivateTenant, canSuspendTenant } from "@/lib/tenant-status-actions";
 
 type Props = { params: { id: string } };
 type TenantDetail = {
@@ -111,12 +114,13 @@ export default function SuperAdminTenantDetailPage({ params }: Props) {
     mutationFn: async () => {
       const res = await saApiFetch(`/tenants/${params.id}/impersonate`, { method: "POST" });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? "Failed");
-      return (await res.json()) as { token: string };
+      return (await res.json()) as ImpersonationStartBody;
     },
-    onSuccess: ({ token }) => {
-      localStorage.setItem("impersonation_token", token);
+    onSuccess: (data) => {
+      applyImpersonationSession(data);
       toast("Impersonation started", "success");
       router.push("/dashboard");
+      router.refresh();
     },
     onError: (err: unknown) => toast(err instanceof Error ? err.message : "Failed", "error"),
   });
@@ -190,12 +194,12 @@ export default function SuperAdminTenantDetailPage({ params }: Props) {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            {data.status === "active" ? (
+            {canSuspendTenant(data.status) ? (
               <Button variant="outline" onClick={() => setShowSuspend(true)}>
                 Suspend
               </Button>
             ) : null}
-            {data.status === "suspended" ? (
+            {canActivateTenant(data.status) ? (
               <Button variant="outline" className="text-success border-success/30" onClick={() => activate.mutate()}>
                 Activate
               </Button>

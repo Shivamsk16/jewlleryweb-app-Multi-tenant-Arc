@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { IMPERSONATION_COOKIE_NAME } from "@/lib/auth";
+import { clearImpersonationCookie, IMPERSONATION_COOKIE_NAME } from "@/lib/auth";
 import { json, parseJson, withSuperAdmin } from "@/lib/api-helpers";
 import * as saImpersonation from "@/lib/services/super-admin/impersonate";
 
@@ -14,6 +14,8 @@ export async function POST(req: NextRequest, _ctx: Ctx) {
     if (!token) return json({ message: "Impersonation token required" }, 400);
 
     const result = await saImpersonation.endImpersonation(token, admin.id);
-    return json(result.body, result.status);
+    const res = json(result.body, result.status);
+    if (result.status === 200) clearImpersonationCookie(res);
+    return res;
   });
 }

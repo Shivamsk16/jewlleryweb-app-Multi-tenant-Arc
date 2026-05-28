@@ -40,6 +40,7 @@ export function Header() {
   const router = useRouter();
   const { t } = useTranslation();
   const user = useAuthStore((s) => s.user);
+  const isImpersonating = useAuthStore((s) => s.impersonation.isImpersonating);
   const clearAuth = useAuthStore((s) => s.clear);
 
   const { data: notifications, refetch } = useQuery<Notif[]>({
@@ -62,7 +63,7 @@ export function Header() {
   const onLogout = async () => {
     await apiFetch("/api/auth/logout", { method: "POST" });
     clearAuth();
-    router.push("/login");
+    router.push(isImpersonating ? "/super-admin/tenants" : "/login");
   };
 
   return (

@@ -1,11 +1,12 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import jwt from "jsonwebtoken";
 import {
   hashPassword,
   signSuperAdminToken,
   signToken,
   verifyPassword,
-  verifyToken,
+  verifySessionToken,
   type JWTPayload,
   type SuperAdminJWTPayload,
 } from "@/lib/auth";
@@ -15,7 +16,7 @@ import {
   writeAuditLog,
 } from "@/lib/activity-log";
 import { resolveTenantRoleId, validateTenantForLogin } from "@/lib/tenant-scope";
-import { generateSecureToken, hashToken, in1Hour } from "@/lib/tokens";
+import { generateSecureToken, hashToken, in30Minutes } from "@/lib/tokens";
 import { sendPasswordResetEmail } from "@/lib/email";
 
 const loginSchema = z.object({
@@ -289,23 +290,81 @@ export async function login(body: unknown, meta?: AuthMeta) {
   };
 }
 
-export async function me(token: string | null) {
-  if (!token) return { user: null };
-  const payload = verifyToken(token);
-  if (!payload?.tenantId) return { user: null };
+export type MeResponse = {
+  user: SessionUser | null;
+  token: string | null;
+  isImpersonating: boolean;
+  impersonatedBy: string | null;
+  tenantName: string | null;
+  expiresAt: string | null;
+};
+
+const emptyMeResponse = (): MeResponse => ({
+  user: null,
+  token: null,
+  isImpersonating: false,
+  impersonatedBy: null,
+  tenantName: null,
+  expiresAt: null,
+});
+
+function sessionExpiresAt(token: string): string | null {
+  try {
+    const decoded = jwt.decode(token) as { exp?: number } | null;
+    if (!decoded?.exp) return null;
+    return new Date(decoded.exp * 1000).toISOString();
+  } catch {
+    return null;
+  }
+}
+
+export async function me(token: string | null): Promise<MeResponse> {
+  if (!token) return emptyMeResponse();
+
+  const payload = verifySessionToken(token);
+  if (!payload?.tenantId) return emptyMeResponse();
+
   const user = await prisma.user.findUnique({
     where: { id: payload.id },
-    select: { id: true, email: true, name: true, role: true },
+    select: { id: true, email: true, name: true, role: true, superAdmin: true },
   });
-  if (!user) return { user: null };
+  if (!user || user.superAdmin) return emptyMeResponse();
+
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: payload.tenantId },
+    select: { name: true, status: true, deletedAt: true },
+  });
+  if (!tenant || tenant.deletedAt || tenant.status !== "active") return emptyMeResponse();
+
+  const membership = await prisma.tenantMember.findFirst({
+    where: { userId: user.id, tenantId: payload.tenantId, status: "active" },
+  });
+  if (!membership) return emptyMeResponse();
+
+  if (payload.impersonatedBy) {
+    const session = await prisma.impersonationSession.findFirst({
+      where: { token, endedAt: null, expiresAt: { gt: new Date() } },
+    });
+    if (!session) return emptyMeResponse();
+  }
+
+  const sessionUser: SessionUser = {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role as "ADMIN" | "USER",
+    tenantId: payload.tenantId,
+    tenantSlug: payload.tenantSlug,
+    memberRole: payload.memberRole,
+  };
+
   return {
-    user: {
-      ...user,
-      role: user.role as "ADMIN" | "USER",
-      tenantId: payload.tenantId,
-      tenantSlug: payload.tenantSlug,
-      memberRole: payload.memberRole,
-    },
+    user: sessionUser,
+    token,
+    isImpersonating: !!payload.impersonatedBy,
+    impersonatedBy: payload.impersonatedBy ?? null,
+    tenantName: tenant.name,
+    expiresAt: sessionExpiresAt(token),
   };
 }
 
@@ -495,7 +554,49 @@ export async function setupPassword(body: unknown, meta?: AuthMeta) {
   };
 }
 
-export async function requestPasswordReset(body: unknown) {
+async function auditInvalidPasswordResetToken(ipAddress?: string) {
+  const actorId = await getSystemActorId();
+  if (!actorId) return;
+  await writeAuditLog({
+    actorId,
+    tenantId: null,
+    action: "auth.password_reset_invalid_token",
+    resourceType: "EmailVerification",
+    ipAddress,
+  });
+}
+
+export async function verifyPasswordResetToken(rawToken: string | undefined) {
+  const token = rawToken?.trim();
+  if (!token) {
+    return {
+      status: 400 as const,
+      body: { valid: false, message: "Invalid or expired reset link" },
+    };
+  }
+
+  const record = await findPasswordResetByRawToken(token);
+  if (!record) {
+    return {
+      status: 404 as const,
+      body: { valid: false, message: "Invalid or expired reset link" },
+    };
+  }
+
+  if (record.expiresAt < new Date()) {
+    return {
+      status: 410 as const,
+      body: {
+        valid: false,
+        message: "This reset link has expired. Please request a new one.",
+      },
+    };
+  }
+
+  return { status: 200 as const, body: { valid: true } };
+}
+
+export async function requestPasswordReset(body: unknown, meta?: AuthMeta) {
   const parsed = forgotPasswordSchema.safeParse(body);
   if (!parsed.success) {
     return { status: 400 as const, body: { message: "Invalid input" } };
@@ -505,23 +606,26 @@ export async function requestPasswordReset(body: unknown) {
   const user = await prisma.user.findUnique({ where: { email } });
 
   if (user) {
-    const canReset =
-      user.superAdmin === true ||
-      (await prisma.tenantMember.findFirst({
-        where: { userId: user.id, status: "active" },
-      })) !== null;
+    const activeMembership = await prisma.tenantMember.findFirst({
+      where: { userId: user.id, status: "active" },
+      select: { tenantId: true },
+    });
+
+    const canReset = user.superAdmin === true || activeMembership !== null;
 
     if (canReset) {
       const rawToken = generateSecureToken();
       const hashedToken = hashToken(rawToken);
 
-      await prisma.emailVerification.deleteMany({ where: { userId: user.id } });
+      await prisma.emailVerification.deleteMany({
+        where: { userId: user.id, type: "password_reset" },
+      });
       await prisma.emailVerification.create({
         data: {
           userId: user.id,
           token: hashedToken,
           type: "password_reset",
-          expiresAt: in1Hour(),
+          expiresAt: in30Minutes(),
         },
       });
 
@@ -530,6 +634,16 @@ export async function requestPasswordReset(body: unknown) {
           to: user.email,
           name: user.name,
           resetToken: rawToken,
+        });
+
+        await writeAuditLog({
+          actorId: user.id,
+          tenantId: activeMembership?.tenantId ?? null,
+          action: "auth.password_reset_requested",
+          resourceType: "User",
+          resourceId: user.id,
+          afterState: { emailHash: hashEmailForAudit(email) },
+          ipAddress: meta?.ipAddress,
         });
       } catch (err) {
         console.error("[Auth] Failed to send password reset email:", err);
@@ -556,10 +670,12 @@ export async function resetPassword(body: unknown, meta?: AuthMeta) {
   const record = await findPasswordResetByRawToken(parsed.data.token);
 
   if (!record) {
+    await auditInvalidPasswordResetToken(meta?.ipAddress);
     return { status: 404 as const, body: { message: "Invalid or expired reset link" } };
   }
 
   if (record.expiresAt < new Date()) {
+    await auditInvalidPasswordResetToken(meta?.ipAddress);
     return {
       status: 410 as const,
       body: { message: "This reset link has expired. Please request a new one." },
